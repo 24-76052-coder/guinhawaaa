@@ -58,6 +58,19 @@ Configuration lives in `backend/config/config.php`. Defaults are the standard XA
 
 ---
 
+## Importing the product price list
+
+The CLI importer reads `Pet_Product_Price_List.xlsx` directly. Preview the import first, then add `--apply` to save it:
+
+```powershell
+C:\xampp\php\php.exe backend\scripts\import_price_list.php "C:\path\Pet_Product_Price_List.xlsx"
+C:\xampp\php\php.exe backend\scripts\import_price_list.php "C:\path\Pet_Product_Price_List.xlsx" --apply
+```
+
+Each spreadsheet row becomes a product with Price A and, when provided, Price B. Selling prices, raw unit labels, subcategories, notes, and source rows are retained. `Accessory` is grouped under `Accessories`; uncertain prices or units are marked `Verify`. The price list has no stock quantities or purchase costs, so imported stock and cost start at zero. Enter actual quantities through Stock In and confirm the selling units and sack weights before selling.
+
+The importer validates the workbook before writing and saves new products in one transaction. Repeating an import skips previously imported rows and preserves existing prices, inventory, and accounts. A changed product identity at an already imported source row stops the import for review.
+
 ## Accounts and security
 
 - Passwords are hashed with `password_hash()` and checked with `password_verify()`; no plain-text passwords exist in the database.
