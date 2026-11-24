@@ -375,3 +375,4 @@ The Gmail address and app password are read from the protected config file (or e
 - Run `C:\xampp2\php\php.exe backend\scripts\migrate_staff_archive.php` once on an older database to add the `employees.deleted_at` / `employees.deleted_by` archive columns and their index. The script is idempotent and never deletes data.
 - Run `C:\xampp2\php\php.exe backend\scripts\migrate_staff_email_verification.php` once on an older database to add `employees.email_verified` and the one-time verification table. It is additive; existing email addresses start unverified and no staff rows are deleted.
 - Run `C:\xampp2\php\php.exe backend\scripts\migrate_fixed_schedule.php` once on an older database to drop the legacy `employees.work_shift` column. Every employee now follows the fixed **8:00 AM – 5:00 PM** schedule. The script is idempotent and keeps all staff rows.
+# tite
