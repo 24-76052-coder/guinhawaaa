@@ -49,9 +49,9 @@ try {
         ['GET', '#^/auth/me$#', static fn () => AuthController::me()],
         ['PUT', '#^/auth/profile$#', static fn () => AuthController::updateProfile()],
         ['POST', '#^/auth/change-password$#', static fn () => AuthController::changePassword()],
-        ['GET', '#^/auth/email-verification$#', static fn () => AuthController::staffEmailVerificationStatus()],
-        ['POST', '#^/auth/email-verification/request$#', static fn () => AuthController::requestStaffEmailVerification()],
-        ['POST', '#^/auth/email-verification/verify$#', static fn () => AuthController::verifyStaffEmail()],
+        ['GET', '#^/auth/email-verification$#', static fn () => AuthController::accountEmailVerificationStatus()],
+        ['POST', '#^/auth/email-verification/request$#', static fn () => AuthController::requestAccountEmailVerification()],
+        ['POST', '#^/auth/email-verification/verify$#', static fn () => AuthController::verifyAccountEmail()],
 
         // Email OTP password recovery (Admin, Inventory Staff, Cashier)
         ['POST', '#^/auth/forgot-password$#', static fn () => AuthController::requestPasswordOtp()],
@@ -90,7 +90,6 @@ try {
 
         // Whole-system state
         ['GET', '#^/state$#', static fn () => StateController::index()],
-        ['POST', '#^/state/restore$#', static fn () => StateController::restore()],
 
         // Products and inventory
         ['GET', '#^/products$#', static fn () => ProductController::index()],

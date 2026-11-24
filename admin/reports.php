@@ -8,7 +8,7 @@
   <meta name="description" content="Guinhawa Poultry Supply business reports.">
   <title>Reports &middot; Guinhawa Admin</title>
 
-  <script src="/guinhawa_system/shared/js/theme-init.js"></script>
+  <script src="/guinhawa_system/shared/js/theme-init.js?v=cleanup-20261122-2"></script>
   <link rel="icon" type="image/png" href="/guinhawa_system/assets/images/guinhawa-logo.png">
   <link rel="stylesheet" href="/guinhawa_system/shared/bootstrap5/css/bootstrap.min.css">
   <link rel="stylesheet" href="/guinhawa_system/shared/bootstrap-icons/bootstrap-icons.min.css">
@@ -271,9 +271,9 @@
   <div class="toast-container" id="toastContainer"></div>
 
   <script src="/guinhawa_system/shared/bootstrap5/js/bootstrap.bundle.min.js" defer></script>
-  <script src="/guinhawa_system/shared/js/store.js" defer></script>
-  <script src="/guinhawa_system/shared/js/charts.js" defer></script>
-  <script src="/guinhawa_system/shared/js/app.js" defer></script>
-  <script src="/guinhawa_system/shared/js/reports.js" defer></script>
+  <script src="/guinhawa_system/shared/js/store.js?v=cleanup-20261122-2" defer></script>
+  <script src="/guinhawa_system/shared/js/charts.js?v=cleanup-20261122-2" defer></script>
+  <script src="/guinhawa_system/shared/js/app.js?v=cleanup-20261122-2" defer></script>
+  <script src="/guinhawa_system/shared/js/reports.js?v=cleanup-20261122-2" defer></script>
 </body>
 </html>

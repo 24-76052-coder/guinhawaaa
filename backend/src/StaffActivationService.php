@@ -8,9 +8,9 @@ namespace Guinhawa;
  * Email-based staff account activation.
  *
  * Admin creates the account -> a 32-byte single-use token is stored as a
- * SHA-256 hash -> the staff member receives a 24-hour link -> they choose their
- * own password -> the account becomes Active (or Inactive when the Admin chose
- * an inactive account).
+ * SHA-256 hash in `email_verification_tokens` -> the staff member receives a
+ * 24-hour link -> they choose their own password -> the account becomes Active
+ * (or Inactive when the Admin chose an inactive account).
  *
  * The raw token only ever exists in the email and in the activation URL. It is
  * never stored in the database, returned by the API or written to a log.
@@ -25,14 +25,11 @@ final class StaffActivationService
      *
      * Any earlier unused link is retired so only the newest email works.
      *
-     * @return array{sent: bool, expiresAt: string, email: string}
+     * @return array{sent: bool, expiresAt: string, email: string, error: string}
      */
     public static function issue(int $employeeId, string $targetStatus, array $actor, string $ip = ''): array
     {
-        $employee = Database::fetchOne('SELECT * FROM employees WHERE id = ? LIMIT 1', [$employeeId]);
-        if (!$employee) {
-            throw new HttpException('That account no longer exists.', 404, 'NOT_FOUND');
-        }
+        $employee = self::loadEmployee($employeeId);
         if (($employee['status'] ?? '') !== 'pending') {
             throw new HttpException('That account is not waiting for activation.', 409, 'NOT_PENDING');
         }
@@ -47,21 +44,31 @@ final class StaffActivationService
         }
 
         $token = bin2hex(random_bytes(32));
+        $hash = hash('sha256', $token);
         $expiresAt = date('Y-m-d H:i:s', time() + self::TOKEN_TTL_SECONDS);
         $targetStatus = $targetStatus === 'inactive' ? 'inactive' : 'active';
 
-        Database::transaction(static function () use ($employeeId, $token, $targetStatus, $expiresAt, $ip): void {
+        Database::transaction(static function () use ($employeeId, $hash, $targetStatus, $expiresAt, $ip): void {
             Database::execute(
-                'UPDATE account_activation_tokens SET used_at = NOW()
-                 WHERE employee_id = ? AND used_at IS NULL',
+                'UPDATE ' . Schema::t('email_verification_tokens') . '
+                 SET used_at = NOW()
+                 WHERE user_id = ? AND token_type = "activation" AND used_at IS NULL',
                 [$employeeId],
             );
 
             Database::execute(
-                'INSERT INTO account_activation_tokens
-                    (employee_id, token_hash, target_status, requested_ip, expires_at)
-                 VALUES (?, ?, ?, ?, ?)',
-                [$employeeId, hash('sha256', $token), $targetStatus, substr($ip, 0, 45), $expiresAt],
+                'INSERT INTO ' . Schema::t('email_verification_tokens') . '
+                    (user_id, token_type, pending_email, token_hash, expires_at, target_status,
+                     last_sent_at, requested_ip)
+                 VALUES (?, "activation", ?, ?, ?, ?, NOW(), ?)',
+                [
+                    $employeeId,
+                    self::pendingEmailMarker($employeeId, $hash),
+                    $hash,
+                    $expiresAt,
+                    $targetStatus,
+                    substr($ip, 0, 45),
+                ],
             );
         });
 
@@ -85,11 +92,11 @@ final class StaffActivationService
         Auth::audit(
             $actor,
             $sent ? 'Activation Link Sent' : 'Activation Link Not Sent',
-            "{$employee['full_name']} ({$employee['employee_id']}) " .
+            "{$employee['full_name']} ({$employee['employee_code']}) " .
                 ($sent
                     ? 'was emailed a single-use account activation link valid for 24 hours.'
                     : 'activation email failed: ' . $error),
-            (string) $employee['employee_id'],
+            (string) $employee['employee_code'],
         );
 
         return [
@@ -112,10 +119,7 @@ final class StaffActivationService
      */
     public static function sendAccountReady(int $employeeId, array $actor): array
     {
-        $employee = Database::fetchOne('SELECT * FROM employees WHERE id = ? LIMIT 1', [$employeeId]);
-        if (!$employee) {
-            throw new HttpException('That account no longer exists.', 404, 'NOT_FOUND');
-        }
+        $employee = self::loadEmployee($employeeId);
 
         $email = trim((string) ($employee['email'] ?? ''));
         if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
@@ -146,11 +150,11 @@ final class StaffActivationService
         Auth::audit(
             $actor,
             $sent ? 'Account Ready Email Sent' : 'Account Ready Email Not Sent',
-            "{$employee['full_name']} ({$employee['employee_id']}) " .
+            "{$employee['full_name']} ({$employee['employee_code']}) " .
                 ($sent
                     ? 'was emailed account-ready instructions with the login link.'
                     : 'account-ready email failed: ' . $error),
-            (string) $employee['employee_id'],
+            (string) $employee['employee_code'],
         );
 
         return [
@@ -175,10 +179,10 @@ final class StaffActivationService
         }
 
         $row = Database::fetchOne(
-            'SELECT t.*, e.full_name, e.username, e.email, e.employee_id AS staff_code, e.role, e.status
-             FROM account_activation_tokens t
-             JOIN employees e ON e.id = t.employee_id
-             WHERE t.token_hash = ? LIMIT 1',
+            'SELECT t.*, u.full_name, u.username, u.email, u.employee_code, u.role, u.status
+             FROM ' . Schema::t('email_verification_tokens') . ' t
+             JOIN ' . Schema::t('users') . ' u ON u.id = t.user_id
+             WHERE t.token_type = "activation" AND t.token_hash = ? LIMIT 1',
             [hash('sha256', $token)],
         );
 
@@ -188,11 +192,11 @@ final class StaffActivationService
 
         $expiresAt = (string) $row['expires_at'];
         $employee = [
-            'id' => (int) $row['employee_id'],
+            'id' => (int) $row['user_id'],
             'fullName' => $row['full_name'],
             'username' => $row['username'],
             'email' => $row['email'],
-            'employeeId' => $row['staff_code'],
+            'employeeId' => $row['employee_code'],
             'role' => $row['role'],
             'status' => $row['status'],
         ];
@@ -239,10 +243,10 @@ final class StaffActivationService
 
         $hash = hash('sha256', $token);
         $row = Database::fetchOne(
-            'SELECT t.*, e.full_name, e.username, e.employee_id AS staff_code
-             FROM account_activation_tokens t
-             JOIN employees e ON e.id = t.employee_id
-             WHERE t.token_hash = ? LIMIT 1',
+            'SELECT t.*, u.full_name, u.username, u.employee_code
+             FROM ' . Schema::t('email_verification_tokens') . ' t
+             JOIN ' . Schema::t('users') . ' u ON u.id = t.user_id
+             WHERE t.token_type = "activation" AND t.token_hash = ? LIMIT 1',
             [$hash],
         );
 
@@ -256,7 +260,11 @@ final class StaffActivationService
             return ['ok' => false, 'error' => 'That activation link expired. Ask the Administrator to resend it.'];
         }
 
-        $employee = Database::fetchOne('SELECT * FROM employees WHERE id = ? LIMIT 1', [(int) $row['employee_id']]);
+        $userId = (int) $row['user_id'];
+        $employee = Database::fetchOne(
+            'SELECT * FROM ' . Schema::t('users') . ' WHERE id = ? LIMIT 1',
+            [$userId],
+        );
         if (!$employee) {
             return ['ok' => false, 'error' => 'That staff account no longer exists.'];
         }
@@ -270,7 +278,8 @@ final class StaffActivationService
         Database::transaction(static function () use ($employee, $row, $hash, $newPassword, $targetStatus, $ip, &$updated): void {
             // Lock the token row so two simultaneous submissions cannot both win.
             $locked = Database::fetchOne(
-                'SELECT id FROM account_activation_tokens WHERE token_hash = ? FOR UPDATE',
+                'SELECT id FROM ' . Schema::t('email_verification_tokens') . '
+                 WHERE token_type = "activation" AND token_hash = ? FOR UPDATE',
                 [$hash],
             );
             if (!$locked) {
@@ -278,11 +287,11 @@ final class StaffActivationService
             }
 
             $changed = Database::execute(
-                "UPDATE employees
-                 SET password_hash = ?, status = ?, email_verified = 1, must_change_password = 0,
-                     temp_password_expires_at = NULL, password_changed_at = NOW(),
+                'UPDATE ' . Schema::t('users') . '
+                 SET password_hash = ?, status = ?, email_verified = 1, email_verified_at = NOW(),
+                     must_change_password = 0, temp_password_expires_at = NULL, password_changed_at = NOW(),
                      failed_login_count = 0, locked_until = NULL
-                 WHERE id = ? AND status = 'pending'",
+                 WHERE id = ? AND status = "pending"',
                 [password_hash($newPassword, PASSWORD_DEFAULT), $targetStatus, (int) $employee['id']],
             );
             if ($changed !== 1) {
@@ -290,7 +299,8 @@ final class StaffActivationService
             }
 
             $used = Database::execute(
-                'UPDATE account_activation_tokens SET used_at = NOW()
+                'UPDATE ' . Schema::t('email_verification_tokens') . '
+                 SET used_at = NOW()
                  WHERE id = ? AND used_at IS NULL',
                 [(int) $row['id']],
             );
@@ -299,8 +309,9 @@ final class StaffActivationService
             }
 
             Database::execute(
-                'UPDATE account_activation_tokens SET used_at = NOW()
-                 WHERE employee_id = ? AND used_at IS NULL',
+                'UPDATE ' . Schema::t('email_verification_tokens') . '
+                 SET used_at = NOW()
+                 WHERE user_id = ? AND token_type = "activation" AND used_at IS NULL',
                 [(int) $employee['id']],
             );
 
@@ -315,8 +326,8 @@ final class StaffActivationService
         Auth::audit(
             ['type' => 'employee', 'id' => (int) $employee['id'], 'name' => $employee['full_name']],
             'Staff Account Activated',
-            "{$employee['full_name']} ({$employee['employee_id']}) set their own password and activated the account from " . substr($ip, 0, 45) . '.',
-            (string) $employee['employee_id'],
+            "{$employee['full_name']} ({$employee['employee_code']}) set their own password and activated the account from " . substr($ip, 0, 45) . '.',
+            (string) $employee['employee_code'],
         );
 
         return [
@@ -330,14 +341,11 @@ final class StaffActivationService
     /** Admin action: send a replacement link for a pending account. */
     public static function resend(int $employeeId, array $actor, string $ip = ''): array
     {
-        $employee = Database::fetchOne('SELECT * FROM employees WHERE id = ? LIMIT 1', [$employeeId]);
-        if (!$employee) {
-            throw new HttpException('That account no longer exists.', 404, 'NOT_FOUND');
-        }
+        $employee = self::loadEmployee($employeeId);
 
         $last = Database::fetchOne(
-            'SELECT created_at, target_status FROM account_activation_tokens
-             WHERE employee_id = ? ORDER BY id DESC LIMIT 1',
+            'SELECT created_at, target_status FROM ' . Schema::t('email_verification_tokens') . '
+             WHERE user_id = ? AND token_type = "activation" ORDER BY id DESC LIMIT 1',
             [$employeeId],
         );
         if ($last) {
@@ -358,22 +366,27 @@ final class StaffActivationService
     /** Admin action: cancel a pending invitation and deactivate the account. */
     public static function cancel(int $employeeId, array $actor): array
     {
-        $employee = Database::fetchOne('SELECT * FROM employees WHERE id = ? LIMIT 1', [$employeeId]);
-        if (!$employee) {
-            throw new HttpException('That account no longer exists.', 404, 'NOT_FOUND');
-        }
+        $employee = self::loadEmployee($employeeId);
 
         Database::transaction(static function () use ($employeeId): void {
-            Database::execute('UPDATE account_activation_tokens SET used_at = NOW() WHERE employee_id = ? AND used_at IS NULL', [$employeeId]);
-            Database::execute("UPDATE employees SET status = 'inactive' WHERE id = ? AND status = 'pending'", [$employeeId]);
+            Database::execute(
+                'UPDATE ' . Schema::t('email_verification_tokens') . '
+                 SET used_at = NOW() WHERE user_id = ? AND token_type = "activation" AND used_at IS NULL',
+                [$employeeId],
+            );
+            Database::execute(
+                'UPDATE ' . Schema::t('users') . ' SET status = "inactive"
+                 WHERE id = ? AND status = "pending"',
+                [$employeeId],
+            );
         });
 
         Auth::invalidateSessions('employee', $employeeId);
         Auth::audit(
             $actor,
             'Pending Activation Cancelled',
-            "{$employee['full_name']} ({$employee['employee_id']}) pending invitation was cancelled and the account deactivated.",
-            (string) $employee['employee_id'],
+            "{$employee['full_name']} ({$employee['employee_code']}) pending invitation was cancelled and the account deactivated.",
+            (string) $employee['employee_code'],
         );
 
         return ['ok' => true];
@@ -383,15 +396,17 @@ final class StaffActivationService
     public static function pendingAccounts(): array
     {
         $rows = Database::fetchAll(
-            "SELECT e.id, e.employee_id, e.username, e.full_name, e.email, e.role,
-                    e.date_joined, e.created_at, t.expires_at, t.created_at AS sent_at
-             FROM employees e
-             LEFT JOIN account_activation_tokens t ON t.id = (
-                 SELECT t2.id FROM account_activation_tokens t2
-                 WHERE t2.employee_id = e.id ORDER BY t2.id DESC LIMIT 1
+            "SELECT u.id, u.employee_code, u.username, u.full_name, u.email, u.role,
+                    u.date_joined, u.created_at, t.expires_at, t.created_at AS sent_at
+             FROM " . Schema::t('users') . " u
+             LEFT JOIN " . Schema::t('email_verification_tokens') . " t ON t.id = (
+                 SELECT t2.id FROM " . Schema::t('email_verification_tokens') . " t2
+                 WHERE t2.user_id = u.id AND t2.token_type = 'activation'
+                 ORDER BY t2.id DESC LIMIT 1
              )
-             WHERE e.status = 'pending' AND e.deleted_at IS NULL
-             ORDER BY e.created_at DESC, e.id DESC",
+             WHERE u.status = 'pending' AND u.deleted_at IS NULL
+               AND u.role IN ('inventory-staff', 'cashier', 'counter-staff', 'staff')
+             ORDER BY u.created_at DESC, u.id DESC",
         );
 
         return array_map(static function (array $row): array {
@@ -428,12 +443,37 @@ final class StaffActivationService
         return $base . '/login/index.php';
     }
 
+    private static function loadEmployee(int $employeeId): array
+    {
+        $employee = Database::fetchOne(
+            'SELECT * FROM ' . Schema::t('users') . ' WHERE id = ? LIMIT 1',
+            [$employeeId],
+        );
+        if (!$employee) {
+            throw new HttpException('That account no longer exists.', 404, 'NOT_FOUND');
+        }
+        if (!empty($employee['deleted_at'])) {
+            throw new HttpException('That staff account was archived. Restore it first.', 409, 'ARCHIVED');
+        }
+        if (Users::sessionType($employee) !== 'employee') {
+            throw new HttpException('Administrator accounts are not managed here.', 400, 'VALIDATION');
+        }
+
+        return $employee;
+    }
+
+    /** Unique marker avoids the globally unique pending_email column. */
+    private static function pendingEmailMarker(int $userId, string $hash): string
+    {
+        return 'activation:' . $userId . ':' . $hash;
+    }
+
     private static function activationEmailHtml(array $employee, string $link, string $expiresAt): string
     {
         $name = htmlspecialchars((string) $employee['full_name'], ENT_QUOTES, 'UTF-8');
         $role = Users::ROLE_LABELS[(string) $employee['role']] ?? 'Staff';
         $roleSafe = htmlspecialchars($role, ENT_QUOTES, 'UTF-8');
-        $code = htmlspecialchars((string) $employee['employee_id'], ENT_QUOTES, 'UTF-8');
+        $code = htmlspecialchars((string) $employee['employee_code'], ENT_QUOTES, 'UTF-8');
         $username = htmlspecialchars((string) $employee['username'], ENT_QUOTES, 'UTF-8');
         $url = htmlspecialchars($link, ENT_QUOTES, 'UTF-8');
         $expiry = date('M j, Y g:i A', strtotime($expiresAt));
@@ -469,7 +509,7 @@ final class StaffActivationService
             . "Activate your staff account\n\n"
             . "Hello {$employee['full_name']},\n\n"
             . "The Administrator created a Guinhawa account for you.\n"
-            . "Employee ID: {$employee['employee_id']}\n"
+            . "Employee ID: {$employee['employee_code']}\n"
             . "Username: {$employee['username']}\n\n"
             . "Create your password here:\n{$link}\n\n"
             . "This link works once and expires in 24 hours ({$expiry}).\n"
@@ -481,7 +521,7 @@ final class StaffActivationService
         $name = htmlspecialchars((string) $employee['full_name'], ENT_QUOTES, 'UTF-8');
         $role = Users::ROLE_LABELS[(string) $employee['role']] ?? 'Staff';
         $roleSafe = htmlspecialchars($role, ENT_QUOTES, 'UTF-8');
-        $code = htmlspecialchars((string) $employee['employee_id'], ENT_QUOTES, 'UTF-8');
+        $code = htmlspecialchars((string) $employee['employee_code'], ENT_QUOTES, 'UTF-8');
         $username = htmlspecialchars((string) $employee['username'], ENT_QUOTES, 'UTF-8');
         $schedule = htmlspecialchars(Users::STANDARD_WORK_SCHEDULE, ENT_QUOTES, 'UTF-8');
         $url = htmlspecialchars($loginUrl, ENT_QUOTES, 'UTF-8');
@@ -523,7 +563,7 @@ final class StaffActivationService
             . "Your staff account is ready\n\n"
             . "Hello {$employee['full_name']},\n\n"
             . "The Administrator created your Guinhawa staff account. To sign in for the first time, set your password with the Forgot password option on the login page.\n\n"
-            . "Employee ID: {$employee['employee_id']}\n"
+            . "Employee ID: {$employee['employee_code']}\n"
             . "Username: {$employee['username']}\n"
             . "Work schedule: " . Users::STANDARD_WORK_SCHEDULE . "\n\n"
             . "Login page:\n{$loginUrl}\n\n"

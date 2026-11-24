@@ -73,7 +73,6 @@ final class Auth
             if (!is_array($account)) {
                 return null;
             }
-            self::$resolved = true;
         }
 
         $type = (string) $account['type'];
@@ -85,46 +84,39 @@ final class Auth
             return null;
         }
 
-        if ($type === 'admin') {
-            $row = Database::fetchOne('SELECT * FROM admin WHERE id = 1 LIMIT 1');
-            if (!$row) {
-                self::logout();
-                return null;
-            }
-            if ((int) ($row['session_version'] ?? 1) !== $sessionVersion) {
-                self::logout();
-                return null;
-            }
-            if (self::temporaryPasswordExpired($row)) {
-                self::logout();
-                return null;
-            }
-            self::$user = Users::mapAdmin($row);
-            self::touchSession($type, $id);
-            return self::$user;
+        $row = Database::fetchOne(
+            'SELECT * FROM ' . Schema::t('users') . ' WHERE id = ? LIMIT 1',
+            [$id],
+        );
+        if (!$row) {
+            self::logout();
+            return null;
         }
 
-        if ($type === 'employee') {
-            $row = Database::fetchOne('SELECT * FROM employees WHERE id = ? LIMIT 1', [$id]);
-            if (!$row || $row['status'] !== 'active') {
-                self::logout();
-                return null;
-            }
-            if ((int) ($row['session_version'] ?? 1) !== $sessionVersion) {
-                self::logout();
-                return null;
-            }
-            if (self::temporaryPasswordExpired($row)) {
-                self::logout();
-                return null;
-            }
-            self::$user = Users::mapEmployee($row);
-            self::touchSession($type, $id);
-            return self::$user;
+        $rowType = Users::sessionType($row);
+        if ($rowType !== $type) {
+            self::logout();
+            return null;
+        }
+        if ($type === 'employee' && ($row['status'] ?? '') !== 'active') {
+            self::logout();
+            return null;
+        }
+        if (!empty($row['deleted_at'])) {
+            self::logout();
+            return null;
+        }
+        if ((int) ($row['session_version'] ?? 1) !== $sessionVersion) {
+            self::logout();
+            return null;
+        }
+        if (self::temporaryPasswordExpired($row)) {
+            self::logout();
+            return null;
         }
 
-        self::logout();
-        return null;
+        self::$user = Users::mapUser($row);
+        return self::$user;
     }
 
     public static function requireUser(bool $allowPasswordChange = false): array
@@ -179,32 +171,18 @@ final class Auth
         $_SESSION['auth_session_hash'] = self::currentSessionHash();
         $_SESSION['auth_last_seen'] = time();
 
-        self::openAuthSession($type, (int) $row['id'], $version, $_SESSION['auth_session_hash']);
+        // Live session validity is the PHP session plus `users.session_version`.
+        // Historical login rows remain archived in `users.session_history`.
         self::clearLoginFailures();
         self::$user = null;
         self::$resolved = false;
 
-        return $type === 'admin' ? Users::mapAdmin($row) : Users::mapEmployee($row);
+        return Users::mapUser($row);
     }
 
     public static function logout(): void
     {
-        $account = $_SESSION['account'] ?? null;
-        $hash = $_SESSION['auth_session_hash'] ?? '';
-
         self::forgetRememberToken();
-
-        if (is_array($account) && !empty($account['type']) && !empty($account['id'])) {
-            try {
-                Database::execute(
-                    'UPDATE auth_sessions SET revoked_at = NOW()
-                     WHERE session_hash = ? AND user_type = ? AND user_id = ? AND revoked_at IS NULL',
-                    [$hash, $account['type'], (int) $account['id']],
-                );
-            } catch (\Throwable) {
-                // Never let audit bookkeeping block a sign-out.
-            }
-        }
 
         $_SESSION = [];
         if (ini_get('session.use_cookies')) {
@@ -224,32 +202,27 @@ final class Auth
     }
 
     /**
-     * Bump the account's session version and revoke every stored session.
+     * Bump the account's session version and clear every persistent token.
      * When $keepCurrent is true the session making the request is re-issued
      * with the new version so the user can finish the password change.
      */
     public static function invalidateSessions(string $type, int $id, bool $keepCurrent = false): int
     {
-        $table = $type === 'admin' ? 'admin' : 'employees';
+        $table = Schema::t('users');
         Database::execute("UPDATE {$table} SET session_version = session_version + 1 WHERE id = ?", [$id]);
         $row = Database::fetchOne("SELECT session_version FROM {$table} WHERE id = ? LIMIT 1", [$id]);
         $version = (int) ($row['session_version'] ?? 1);
 
-        Database::execute(
-            'UPDATE auth_sessions SET revoked_at = NOW()
-             WHERE user_type = ? AND user_id = ? AND revoked_at IS NULL',
-            [$type, $id],
-        );
-
-        // A password reset or password change also revokes persistent
-        // "keep me signed in" tokens for that account.
         try {
             Database::execute(
-                'DELETE FROM auth_remember_tokens WHERE user_type = ? AND user_id = ?',
-                [$type, $id],
+                "UPDATE {$table}
+                 SET remember_selector = NULL, remember_token_hash = NULL,
+                     remember_session_version = NULL, remember_expires_at = NULL
+                 WHERE id = ?",
+                [$id],
             );
         } catch (\Throwable) {
-            // Older databases may not have the remember-token table yet.
+            // Never let remember-token bookkeeping block a password change.
         }
 
         $account = $_SESSION['account'] ?? null;
@@ -259,11 +232,9 @@ final class Auth
             && ($account['type'] ?? '') === $type
             && (int) ($account['id'] ?? 0) === $id
         ) {
-            $hash = self::currentSessionHash();
             $_SESSION['auth_version'] = $version;
-            $_SESSION['auth_session_hash'] = $hash;
+            $_SESSION['auth_session_hash'] = self::currentSessionHash();
             $_SESSION['auth_last_seen'] = time();
-            self::openAuthSession($type, $id, $version, $hash);
         }
 
         return $version;
@@ -285,15 +256,16 @@ final class Auth
             return false;
         }
 
-        $type = (string) $account['type'];
         $id = (int) $account['id'];
-        $table = $type === 'admin' ? 'admin' : 'employees';
-        $row = Database::fetchOne("SELECT session_version FROM {$table} WHERE id = ? LIMIT 1", [$id]);
+        $row = Database::fetchOne(
+            'SELECT session_version FROM ' . Schema::t('users') . ' WHERE id = ? LIMIT 1',
+            [$id],
+        );
         if (!$row) {
             return false;
         }
 
-        return self::issueRememberToken($type, $id, (int) ($row['session_version'] ?? 1));
+        return self::issueRememberToken((int) ($row['session_version'] ?? 1), $id);
     }
 
     private static function attemptRememberLogin(): bool
@@ -311,60 +283,64 @@ final class Auth
 
         try {
             $row = Database::fetchOne(
-                'SELECT * FROM auth_remember_tokens WHERE selector = ? AND expires_at > NOW() LIMIT 1',
+                'SELECT * FROM ' . Schema::t('users') . '
+                 WHERE remember_selector = ? AND remember_expires_at > NOW() LIMIT 1',
                 [$selector],
             );
         } catch (\Throwable) {
             return false;
         }
 
-        if (!$row || !hash_equals((string) $row['token_hash'], hash('sha256', $validator))) {
+        if (!$row || !hash_equals((string) $row['remember_token_hash'], hash('sha256', $validator))) {
             self::forgetRememberToken();
             return false;
         }
 
-        $type = (string) $row['user_type'];
-        $id = (int) $row['user_id'];
-        $table = $type === 'admin' ? 'admin' : 'employees';
-        $account = Database::fetchOne("SELECT * FROM {$table} WHERE id = ? LIMIT 1", [$id]);
-
-        $revoke = static function (int $tokenId): void {
+        $id = (int) $row['id'];
+        $type = Users::sessionType($row);
+        $revoke = static function () use ($id): void {
             try {
-                Database::execute('DELETE FROM auth_remember_tokens WHERE id = ?', [$tokenId]);
+                Database::execute(
+                    'UPDATE ' . Schema::t('users') . '
+                     SET remember_selector = NULL, remember_token_hash = NULL,
+                         remember_session_version = NULL, remember_expires_at = NULL
+                     WHERE id = ?',
+                    [$id],
+                );
             } catch (\Throwable) {
             }
         };
 
-        if (!$account) {
-            $revoke((int) $row['id']);
+        if ($type === 'employee' && ($row['status'] ?? '') !== 'active') {
+            $revoke();
             self::forgetRememberToken();
             return false;
         }
-        if ($type === 'employee' && ($account['status'] ?? '') !== 'active') {
-            $revoke((int) $row['id']);
+        if (!empty($row['deleted_at'])) {
+            $revoke();
             self::forgetRememberToken();
             return false;
         }
-        if ((int) ($row['session_version'] ?? 1) !== (int) ($account['session_version'] ?? 1)) {
-            $revoke((int) $row['id']);
+        if ((int) ($row['remember_session_version'] ?? 0) !== (int) ($row['session_version'] ?? 1)) {
+            $revoke();
             self::forgetRememberToken();
             return false;
         }
-        if (self::temporaryPasswordExpired($account)) {
-            $revoke((int) $row['id']);
+        if (self::temporaryPasswordExpired($row)) {
+            $revoke();
             self::forgetRememberToken();
             return false;
         }
 
         // Rotate the token on every automatic sign-in.
-        $revoke((int) $row['id']);
-        self::startSession($type, $account);
-        self::issueRememberToken($type, $id, (int) ($account['session_version'] ?? 1));
+        $revoke();
+        self::startSession($type, $row);
+        self::issueRememberToken((int) ($row['session_version'] ?? 1), $id);
 
         return true;
     }
 
-    private static function issueRememberToken(string $type, int $id, int $version): bool
+    private static function issueRememberToken(int $version, int $id): bool
     {
         try {
             $selector = bin2hex(random_bytes(12));
@@ -372,23 +348,17 @@ final class Auth
             $expiresAt = date('Y-m-d H:i:s', time() + self::REMEMBER_DAYS * 86400);
 
             Database::execute(
-                'INSERT INTO auth_remember_tokens
-                    (selector, token_hash, user_type, user_id, session_version, ip_address, user_agent, expires_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                'UPDATE ' . Schema::t('users') . '
+                 SET remember_selector = ?, remember_token_hash = ?,
+                     remember_session_version = ?, remember_expires_at = ?
+                 WHERE id = ?',
                 [
                     $selector,
                     hash('sha256', $validator),
-                    $type,
-                    $id,
                     $version,
-                    substr((string) ($_SERVER['REMOTE_ADDR'] ?? ''), 0, 45),
-                    substr((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 255),
                     $expiresAt,
+                    $id,
                 ],
-            );
-
-            Database::execute(
-                'DELETE FROM auth_remember_tokens WHERE expires_at < NOW()',
             );
 
             self::writeRememberCookie($selector . ':' . $validator, time() + self::REMEMBER_DAYS * 86400);
@@ -405,7 +375,13 @@ final class Auth
             [$selector] = explode(':', $raw, 2);
             if (preg_match('/^[a-f0-9]{24}$/', $selector)) {
                 try {
-                    Database::execute('DELETE FROM auth_remember_tokens WHERE selector = ?', [$selector]);
+                    Database::execute(
+                        'UPDATE ' . Schema::t('users') . '
+                         SET remember_selector = NULL, remember_token_hash = NULL,
+                             remember_session_version = NULL, remember_expires_at = NULL
+                         WHERE remember_selector = ?',
+                        [$selector],
+                    );
                 } catch (\Throwable) {
                 }
             }
@@ -497,15 +473,18 @@ final class Auth
         return $timestamp !== false && $timestamp < time();
     }
 
-    /** Account audit row for administrator activity. */
+    /** Account/security audit row in the unified audit log. */
     public static function audit(?array $actor, string $action, string $details, ?string $target = null): void
     {
         Database::execute(
-            'INSERT INTO account_audit_logs (actor_type, actor_id, actor_name, action, target_employee_id, details)
-             VALUES (?, ?, ?, ?, ?, ?)',
+            'INSERT INTO ' . Schema::t('audit_logs') . '
+                (category, actor, actor_type, actor_id, actor_name, action, target_employee_id, details)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
             [
+                'account',
+                $actor['name'] ?? 'System',
                 $actor['type'] ?? null,
-                isset($actor['id']) ? (int) $actor['id'] : null,
+                self::actorId($actor),
                 $actor['name'] ?? 'System',
                 $action,
                 $target,
@@ -514,20 +493,37 @@ final class Auth
         );
     }
 
+    /** Business audit row in the unified audit log. */
     public static function businessAudit(string $action, string $details, ?array $actor = null): void
     {
         $actor ??= self::user();
         Database::execute(
-            'INSERT INTO audit_logs (actor, actor_type, actor_id, action, details)
-             VALUES (?, ?, ?, ?, ?)',
+            'INSERT INTO ' . Schema::t('audit_logs') . '
+                (category, actor, actor_type, actor_id, actor_name, action, details)
+             VALUES (?, ?, ?, ?, ?, ?, ?)',
             [
+                'business',
                 $actor['name'] ?? 'System',
                 $actor['type'] ?? null,
-                isset($actor['id']) ? (int) $actor['id'] : null,
+                self::actorId($actor),
+                $actor['name'] ?? 'System',
                 $action,
                 $details,
             ],
         );
+    }
+
+    private static function actorId(?array $actor): ?int
+    {
+        if (!is_array($actor) || empty($actor['id'])) {
+            return null;
+        }
+        $id = (int) $actor['id'];
+        $row = Database::fetchOne(
+            'SELECT id FROM ' . Schema::t('users') . ' WHERE id = ? LIMIT 1',
+            [$id],
+        );
+        return $row ? $id : null;
     }
 
     public static function pdo(): PDO
@@ -543,57 +539,6 @@ final class Auth
     private static function sessionIsActive(string $type, int $id): bool
     {
         $hash = (string) ($_SESSION['auth_session_hash'] ?? '');
-        if ($hash === '') {
-            return false;
-        }
-
-        $row = Database::fetchOne(
-            'SELECT id FROM auth_sessions
-             WHERE session_hash = ? AND user_type = ? AND user_id = ? AND revoked_at IS NULL
-             LIMIT 1',
-            [$hash, $type, $id],
-        );
-
-        return (bool) $row;
-    }
-
-    private static function openAuthSession(string $type, int $id, int $version, string $hash): void
-    {
-        Database::execute(
-            'INSERT INTO auth_sessions
-                (session_hash, user_type, user_id, session_version, ip_address, user_agent, last_seen_at)
-             VALUES (?, ?, ?, ?, ?, ?, NOW())
-             ON DUPLICATE KEY UPDATE
-                user_type = VALUES(user_type),
-                user_id = VALUES(user_id),
-                session_version = VALUES(session_version),
-                ip_address = VALUES(ip_address),
-                user_agent = VALUES(user_agent),
-                last_seen_at = NOW(),
-                revoked_at = NULL',
-            [
-                $hash,
-                $type,
-                $id,
-                $version,
-                substr((string) ($_SERVER['REMOTE_ADDR'] ?? ''), 0, 45),
-                substr((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 255),
-            ],
-        );
-    }
-
-    private static function touchSession(string $type, int $id): void
-    {
-        $lastSeen = (int) ($_SESSION['auth_last_seen'] ?? 0);
-        if ($lastSeen > 0 && time() - $lastSeen < 300) {
-            return;
-        }
-        $_SESSION['auth_last_seen'] = time();
-
-        Database::execute(
-            'UPDATE auth_sessions SET last_seen_at = NOW()
-             WHERE session_hash = ? AND user_type = ? AND user_id = ? AND revoked_at IS NULL',
-            [self::currentSessionHash(), $type, $id],
-        );
+        return $hash !== '' && hash_equals(self::currentSessionHash(), $hash);
     }
 }

@@ -8,7 +8,7 @@
   <meta name="description" content="Guinhawa Poultry Supply user management — create and manage staff accounts.">
   <title>User Management &middot; Guinhawa Admin</title>
 
-  <script src="/guinhawa_system/shared/js/theme-init.js"></script>
+  <script src="/guinhawa_system/shared/js/theme-init.js?v=cleanup-20261122-2"></script>
   <link rel="icon" type="image/png" href="/guinhawa_system/assets/images/guinhawa-logo.png">
   <link rel="stylesheet" href="/guinhawa_system/shared/bootstrap5/css/bootstrap.min.css">
   <link rel="stylesheet" href="/guinhawa_system/shared/bootstrap-icons/bootstrap-icons.min.css">
@@ -28,11 +28,11 @@
       <div class="page-head">
         <div>
           <div class="page-eyebrow"><i class="bi bi-people" aria-hidden="true"></i> Administration</div>
-          <h1 class="page-title">User Management</h1>
+          <h1 class="page-title">Staff Account Management</h1>
           <p class="page-sub">
-            Create and manage Inventory Staff and Cashier accounts. Staff sign in with a username
-            and password; Gmail is optional and can be verified later. Only Admins can add staff,
-            assign roles and change access.
+            Create and manage Inventory Staff and Cashier accounts. The Admin sets each staff member's
+            default password; staff sign in with their registered email or Staff ID and must change that
+            password on first sign-in. Only Admins can add staff, assign roles and change access.
           </p>
         </div>
         <div class="page-actions">
@@ -99,7 +99,7 @@
               <thead>
                 <tr>
                   <th>Staff member</th>
-                  <th>Work email</th>
+                  <th>Personal email</th>
                   <th>Role</th>
                   <th>Link sent</th>
                   <th>Link expires</th>
@@ -117,7 +117,7 @@
           <div class="filter-bar">
             <div class="search-field">
               <i class="bi bi-search" aria-hidden="true"></i>
-              <input class="form-control" type="search" id="accountSearch" placeholder="Search name, username, email, phone, or employee ID" aria-label="Search accounts">
+              <input class="form-control" type="search" id="accountSearch" placeholder="Search name, Staff ID, email, username, or phone" aria-label="Search accounts">
             </div>
             <select class="form-select" id="accountRole" aria-label="Filter by role" style="max-width:180px">
               <option value="">All roles</option>
@@ -125,11 +125,12 @@
               <option value="Inventory Staff">Inventory Staff</option>
               <option value="Cashier">Cashier</option>
             </select>
-            <select class="form-select" id="accountStatus" aria-label="Filter by status" style="max-width:180px">
+            <select class="form-select" id="accountStatus" aria-label="Filter by status" style="max-width:210px">
               <option value="">All statuses</option>
               <option value="Active">Active</option>
-              <option value="Pending">Pending</option>
+              <option value="Must Change Password">Must Change Password</option>
               <option value="Inactive">Inactive</option>
+              <option value="Pending">Pending (legacy)</option>
             </select>
             <button class="btn btn-outline-app" type="button" id="clearAccountFilters">
               <i class="bi bi-arrow-counterclockwise" aria-hidden="true"></i> Clear
@@ -153,10 +154,11 @@
               <thead>
                 <tr>
                   <th class="sortable">Staff member <i class="bi bi-arrow-down-up sort-icon"></i></th>
-                  <th class="sortable">Employee ID <i class="bi bi-arrow-down-up sort-icon"></i></th>
-                  <th class="sortable">Username <i class="bi bi-arrow-down-up sort-icon"></i></th>
+                  <th class="sortable">Staff ID <i class="bi bi-arrow-down-up sort-icon"></i></th>
                   <th class="sortable">Role <i class="bi bi-arrow-down-up sort-icon"></i></th>
-                  <th>Phone</th>
+                  <th>Contact</th>
+                  <th class="sortable">Created <i class="bi bi-arrow-down-up sort-icon"></i></th>
+                  <th class="sortable">Last password change <i class="bi bi-arrow-down-up sort-icon"></i></th>
                   <th class="sortable">Last active <i class="bi bi-arrow-down-up sort-icon"></i></th>
                   <th class="sortable">Status <i class="bi bi-arrow-down-up sort-icon"></i></th>
                   <th class="text-end">Actions</th>
@@ -167,7 +169,7 @@
           </div>
           <div class="table-foot">
             <span id="accountsFoot">Showing 0 of 0 accounts</span>
-            <span class="text-app-muted">Deleted staff are kept in Archived staff &middot; Admin accounts are protected</span>
+            <span class="text-app-muted">Admin passwords can never be viewed &middot; use Reset password to issue a temporary one</span>
           </div>
         </div>
       </section>
@@ -191,7 +193,7 @@
               <thead>
                 <tr>
                   <th>Staff member</th>
-                  <th>Employee ID</th>
+                  <th>Staff ID</th>
                   <th>Role</th>
                   <th>Joined</th>
                   <th>Deleted on</th>
@@ -229,9 +231,9 @@
             <div class="alert-app staff-form-note" id="activationNote">
               <i class="bi bi-shield-check" aria-hidden="true"></i>
               <div>
-                The account starts <strong>Active</strong>. The staff member signs in with the
-                username and password you set here. Gmail is optional and can be verified later
-                from their profile.
+                The account is created <strong>Active</strong> with the default password you set below.
+                The staff member signs in with their email or Staff ID and must choose a new password
+                before any dashboard opens. You will never be able to view that password again.
               </div>
             </div>
 
@@ -257,10 +259,10 @@
                   <div class="form-text">Contact number shown in the team directory.</div>
                 </div>
                 <div class="col-12 col-md-6">
-                  <label class="form-label" for="accountEmail">Staff Gmail <span class="opt">Optional</span></label>
-                  <input class="form-control" id="accountEmail" type="email" pattern="[^@\s]+@gmail\.com" placeholder="name@gmail.com" autocomplete="email">
-                  <div class="invalid-feedback">Enter a valid Gmail address ending in @gmail.com.</div>
-                  <div class="form-text">Gmail must be verified by the staff member before it can be used for password recovery.</div>
+                  <label class="form-label" for="accountEmail">Staff personal email <span class="req">*</span></label>
+                  <input class="form-control" id="accountEmail" type="email" placeholder="name@example.com" autocomplete="email" required>
+                  <div class="invalid-feedback">Enter a valid email address.</div>
+                  <div class="form-text">Used to sign in and to receive password-reset links.</div>
                 </div>
               </div>
             </section>
@@ -276,24 +278,18 @@
               </div>
               <div class="row g-3">
                 <div class="col-12 col-md-6">
-                  <label class="form-label" for="accountEmployeeId">Employee ID</label>
+                  <label class="form-label" for="accountStaffId">Staff ID</label>
                   <div class="input-group">
                     <span class="input-group-text"><i class="bi bi-magic" aria-hidden="true"></i></span>
-                    <input class="form-control" id="accountEmployeeId" type="text" readonly aria-readonly="true" tabindex="-1">
+                    <input class="form-control" id="accountStaffId" type="text" readonly aria-readonly="true" tabindex="-1">
                   </div>
-                  <div class="form-text">Generated automatically when the account is created.</div>
+                  <div class="form-text">Generated automatically in STF-001, STF-002 order.</div>
                 </div>
                 <div class="col-12 col-md-6">
-                  <label class="form-label" for="accountUsername">Username <span class="req">*</span></label>
-                  <input class="form-control" id="accountUsername" type="text" placeholder="e.g. maria.santos" pattern="[A-Za-z0-9._-]+" title="Use letters, numbers, dots, dashes or underscores" autocomplete="off" required>
+                  <label class="form-label" for="accountUsername">Username <span class="opt">Optional</span></label>
+                  <input class="form-control" id="accountUsername" type="text" placeholder="Auto-generated from email" pattern="[A-Za-z0-9._-]+" title="Use letters, numbers, dots, dashes or underscores" autocomplete="off">
                   <div class="invalid-feedback">Enter a unique username (letters, numbers, dots, dashes, underscores).</div>
-                  <div class="form-text">Used with the password on the sign-in page.</div>
-                </div>
-                <div class="col-12 col-md-6" id="accountPasswordWrap">
-                  <label class="form-label" for="accountPassword">Initial password <span class="req">*</span></label>
-                  <input class="form-control" id="accountPassword" type="password" autocomplete="new-password" minlength="10" maxlength="128" pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).{10,128}" required>
-                  <div class="invalid-feedback">Use at least 10 characters with an uppercase letter, a lowercase letter, and a number.</div>
-                  <div class="form-text">The password is stored as a secure hash. Share it with the staff member privately.</div>
+                  <div class="form-text">Leave blank to generate one from the staff member's email.</div>
                 </div>
                 <div class="col-12 col-md-6">
                   <label class="form-label" for="accountRoleInput">Role <span class="req">*</span></label>
@@ -308,10 +304,37 @@
                   <label class="form-label" for="accountStatusInput">Account status <span class="req">*</span></label>
                   <select class="form-select" id="accountStatusInput" required>
                     <option value="active">Active</option>
-                    <option value="pending">Pending</option>
                     <option value="inactive">Inactive</option>
+                    <option value="pending" hidden>Pending (legacy)</option>
                   </select>
-                  <div class="form-text">Pending and inactive accounts cannot sign in until activated.</div>
+                  <div class="form-text">Inactive accounts cannot sign in until reactivated.</div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Account security -->
+            <section class="form-section" id="passwordSection" aria-labelledby="securitySectionTitle">
+              <div class="form-section__head">
+                <span class="form-section__icon"><i class="bi bi-shield-lock" aria-hidden="true"></i></span>
+                <div>
+                  <h3 id="securitySectionTitle">Default password</h3>
+                  <p>The staff member must replace this password the first time they sign in.</p>
+                </div>
+              </div>
+              <div class="row g-3">
+                <div class="col-12">
+                  <label class="form-label" for="accountPassword">Default password <span class="req">*</span></label>
+                  <div class="input-group">
+                    <input class="form-control" id="accountPassword" type="password" placeholder="At least 10 characters" autocomplete="new-password" minlength="10" required>
+                    <button class="btn btn-outline-app" type="button" id="toggleAccountPassword" aria-label="Show default password" aria-pressed="false">
+                      <i class="bi bi-eye" aria-hidden="true"></i>
+                    </button>
+                    <button class="btn btn-outline-app" type="button" id="generateAccountPassword">
+                      <i class="bi bi-stars" aria-hidden="true"></i> Generate
+                    </button>
+                  </div>
+                  <div class="invalid-feedback">Use at least 10 characters with an uppercase letter, a lowercase letter and a number.</div>
+                  <div class="form-text">Share it with the staff member securely. It is never shown again after the account is created.</div>
                 </div>
               </div>
             </section>
@@ -329,13 +352,65 @@
     </div>
   </div>
 
+  <!-- Reset password modal -->
+  <div class="modal fade staff-form-modal" id="resetPasswordModal" tabindex="-1" aria-labelledby="resetPasswordTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <div class="d-flex align-items-center gap-3">
+            <div class="modal-icon"><i class="bi bi-key" aria-hidden="true"></i></div>
+            <div>
+              <h2 class="modal-title" id="resetPasswordTitle">Reset password</h2>
+              <div class="text-app-muted" style="font-size:.8rem" id="resetPasswordSub">Issue a temporary password</div>
+            </div>
+          </div>
+          <button type="button" class="btn-close btn-close-app" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+
+        <form id="resetPasswordForm" novalidate>
+          <div class="modal-body">
+            <div class="alert-app staff-form-note">
+              <i class="bi bi-shield-lock" aria-hidden="true"></i>
+              <div>
+                The staff member must choose a new password the next time they sign in. Any active
+                sessions are signed out immediately. You can never view an existing password.
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label" for="resetPasswordInput">Temporary password <span class="opt">Optional</span></label>
+              <div class="input-group">
+                <input class="form-control" id="resetPasswordInput" type="password" placeholder="Leave blank to generate one" autocomplete="new-password" minlength="10">
+                <button class="btn btn-outline-app" type="button" id="toggleResetPassword" aria-label="Show temporary password" aria-pressed="false">
+                  <i class="bi bi-eye" aria-hidden="true"></i>
+                </button>
+                <button class="btn btn-outline-app" type="button" id="generateResetPassword">
+                  <i class="bi bi-stars" aria-hidden="true"></i> Generate
+                </button>
+              </div>
+              <div class="invalid-feedback">Use at least 10 characters with an uppercase letter, a lowercase letter and a number.</div>
+              <div class="form-text">If left blank, a secure password is generated and shown to you once.</div>
+            </div>
+          </div>
+
+          <div class="modal-footer staff-form-footer">
+            <button type="button" class="btn btn-outline-app" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-brand" id="resetPasswordBtn">
+              <i class="bi bi-key" aria-hidden="true"></i> Reset password
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
   <div class="toast-container" id="toastContainer"></div>
 
   <script src="/guinhawa_system/shared/bootstrap5/js/bootstrap.bundle.min.js" defer></script>
   <script src="/guinhawa_system/shared/sweetalert2/sweetalert2.all.min.js" defer></script>
-  <script src="/guinhawa_system/shared/js/store.js" defer></script>
-  <script src="/guinhawa_system/shared/js/charts.js" defer></script>
-  <script src="/guinhawa_system/shared/js/app.js" defer></script>
-  <script src="/guinhawa_system/shared/js/accounts.js" defer></script>
+  <script src="/guinhawa_system/shared/js/store.js?v=cleanup-20261122-2" defer></script>
+  <script src="/guinhawa_system/shared/js/charts.js?v=cleanup-20261122-2" defer></script>
+  <script src="/guinhawa_system/shared/js/app.js?v=cleanup-20261122-2" defer></script>
+  <script src="/guinhawa_system/shared/js/accounts.js?v=cleanup-20261122-2" defer></script>
 </body>
 </html>

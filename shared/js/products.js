@@ -174,7 +174,7 @@
             '<td class="text-end text-nowrap">' +
             (canManage
               ? '<button class="btn btn-icon" type="button" data-edit="' + UI.escape(product.id) + '" title="Edit ' + UI.escape(product.name) + '" aria-label="Edit product"><i class="bi bi-pencil"></i></button> ' +
-                '<a class="btn btn-icon btn-icon--success" href="' + UI.areaHref("stock-in.php?product=" + encodeURIComponent(product.id)) + '" title="Stock in" aria-label="Stock in"><i class="bi bi-box-arrow-in-down"></i></a> ' +
+                '<a class="btn btn-icon btn-icon--success" href="' + UI.areaHref("inventory.php?panel=in&product=" + encodeURIComponent(product.id)) + '" title="Stock in" aria-label="Stock in"><i class="bi bi-box-arrow-in-down"></i></a> ' +
                 '<button class="btn btn-icon btn-icon--danger" type="button" data-delete="' + UI.escape(product.id) + '" title="Delete product" aria-label="Delete product"><i class="bi bi-trash3"></i></button>'
               : '<span class="cell-sub">View only</span>') +
             "</td></tr>"

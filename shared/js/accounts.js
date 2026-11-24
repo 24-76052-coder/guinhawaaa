@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GUINHAWA — Admin & staff accounts
+   GUINHAWA — Admin staff account management
    ========================================================================== */
 
 (function (window, document) {
@@ -13,12 +13,6 @@
     return document.getElementById(id);
   };
 
-  var ROLE_CLASS = {
-    Admin: "admin",
-    "Inventory Staff": "staff",
-    Cashier: "cashier",
-  };
-
   var STANDARD_SCHEDULE = "8:00 AM \u2013 5:00 PM";
 
   var state = {
@@ -28,6 +22,7 @@
   };
 
   var editingId = null;
+  var resetTargetId = null;
   var usernameTouched = false;
   var currentUser = Store.getCurrentUser();
 
@@ -86,20 +81,77 @@
     });
   }
 
+  /* ------------------------------ Password helpers ------------------------ */
+
+  function passwordProblem(value) {
+    var password = String(value == null ? "" : value);
+    if (!password) return "Enter a default password.";
+    if (password.length < 10) return "Use at least 10 characters.";
+    if (password.length > 128) return "Use 128 characters or fewer.";
+    if (!/[a-z]/.test(password)) return "Include at least one lowercase letter.";
+    if (!/[A-Z]/.test(password)) return "Include at least one uppercase letter.";
+    if (!/[0-9]/.test(password)) return "Include at least one number.";
+    return "";
+  }
+
+  function randomPassword() {
+    var upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+    var lower = "abcdefghijkmnopqrstuvwxyz";
+    var digits = "23456789";
+    var symbols = "!@#$%&*?";
+    var all = upper + lower + digits + symbols;
+    var chars = [pick(upper), pick(lower), pick(digits), pick(symbols)];
+    for (var i = 0; i < 8; i += 1) chars.push(pick(all));
+    for (var j = chars.length - 1; j > 0; j -= 1) {
+      var k = Math.floor(Math.random() * (j + 1));
+      var temp = chars[j];
+      chars[j] = chars[k];
+      chars[k] = temp;
+    }
+    return chars.join("");
+  }
+
+  function pick(characters) {
+    return characters.charAt(Math.floor(Math.random() * characters.length));
+  }
+
+  function setPasswordVisibility(input, button, visible) {
+    if (!input || !button) return;
+    input.type = visible ? "text" : "password";
+    button.setAttribute("aria-pressed", visible ? "true" : "false");
+    button.setAttribute("aria-label", visible ? "Hide password" : "Show password");
+    var icon = button.querySelector("i");
+    if (icon) icon.className = visible ? "bi bi-eye-slash" : "bi bi-eye";
+  }
+
   /* ------------------------------- Rendering ------------------------------ */
+
+  function displayStatus(account) {
+    if (account.status === "Active" && account.mustChangePassword) return "Must Change Password";
+    return account.status || "Inactive";
+  }
+
+  function statusMeta(account) {
+    var label = displayStatus(account);
+    if (label === "Active") return { label: label, variant: "success" };
+    if (label === "Must Change Password") return { label: label, variant: "warning" };
+    if (label === "Pending") return { label: label, variant: "warning" };
+    return { label: "Inactive", variant: "neutral" };
+  }
 
   function filteredAccounts() {
     var q = state.search.trim().toLowerCase();
     return Store.data.accounts.filter(function (account) {
       if (state.role && account.role !== state.role) return false;
-      if (state.status && account.status !== state.status) return false;
+      if (state.status && displayStatus(account) !== state.status) return false;
       if (!q) return true;
       return (
         account.name + " " +
+        (account.staffId || "") + " " +
+        (account.employeeId || "") + " " +
         (account.username || "") + " " +
         (account.email || "") + " " +
         (account.phone || "") + " " +
-        account.employeeId + " " +
         account.role
       )
         .toLowerCase()
@@ -131,13 +183,41 @@
     return account.role === "Admin" || account.id === currentUser.id;
   }
 
+  function renderActions(account) {
+    var id = UI.escape(account.id);
+    var actions =
+      '<button class="btn btn-icon" type="button" data-edit="' + id + '" title="Edit account" aria-label="Edit account"><i class="bi bi-pencil"></i></button> ';
+
+    if (account.role === "Admin") {
+      actions +=
+        '<button class="btn btn-icon" type="button" disabled title="Administrator password is managed by the owner" aria-label="Reset password unavailable"><i class="bi bi-key"></i></button> ';
+      actions +=
+        '<button class="btn btn-icon" type="button" disabled title="Administrator accounts cannot be deactivated" aria-label="Deactivate unavailable"><i class="bi bi-lock"></i></button>';
+      return actions;
+    }
+
+    actions +=
+      '<button class="btn btn-icon" type="button" data-reset="' + id + '" title="Reset password" aria-label="Reset password"><i class="bi bi-key"></i></button> ';
+
+    var active = account.status === "Active";
+    actions +=
+      '<button class="btn btn-icon ' + (active ? "btn-icon--danger" : "btn-icon--success") + '" type="button" data-toggle="' + id + '" title="' +
+      (active ? "Deactivate account" : "Activate account") + '" aria-label="' +
+      (active ? "Deactivate account" : "Activate account") + '"><i class="bi bi-' +
+      (active ? "pause" : "play") + '"></i></button> ';
+
+    actions +=
+      '<button class="btn btn-icon btn-icon--danger" type="button" data-delete="' + id + '" title="Delete staff (kept in archive)" aria-label="Delete staff"><i class="bi bi-trash3"></i></button>';
+    return actions;
+  }
+
   function renderTable() {
     var tbody = $("accountsBody");
     var rows = filteredAccounts();
 
     if (!rows.length) {
       tbody.innerHTML = UI.emptyRow(
-        8,
+        9,
         "bi-people",
         "No accounts match",
         "Adjust the search or filters. Only Admins can create new team accounts."
@@ -145,32 +225,16 @@
     } else {
       tbody.innerHTML = rows
         .map(function (account) {
-          var statusVariant =
-            account.status === "Active"
-              ? "success"
-              : account.status === "Pending"
-              ? "warning"
-              : "neutral";
+          var status = statusMeta(account);
           var initials = UI.initials(account.name);
           var protectedRow = isProtected(account);
-          var actions =
-            '<button class="btn btn-icon" type="button" data-edit="' + UI.escape(account.id) + '" title="Edit account" aria-label="Edit account"><i class="bi bi-pencil"></i></button> ';
-          if (account.role === "Admin") {
-            actions +=
-              '<button class="btn btn-icon" type="button" disabled title="Administrator password is managed by the owner" aria-label="Reset password unavailable"><i class="bi bi-key"></i></button> ';
-            actions +=
-              '<button class="btn btn-icon" type="button" disabled title="Administrator accounts cannot be deactivated" aria-label="Deactivate unavailable"><i class="bi bi-lock"></i></button>';
-          } else if (account.status === "Pending") {
-            actions +=
-              '<button class="btn btn-icon btn-icon--success" type="button" data-toggle="' + UI.escape(account.id) + '" title="Activate account" aria-label="Activate account"><i class="bi bi-play"></i></button> ';
-            actions +=
-              '<button class="btn btn-icon btn-icon--danger" type="button" data-delete="' + UI.escape(account.id) + '" title="Delete staff (kept in archive)" aria-label="Delete staff"><i class="bi bi-trash3"></i></button>';
-          } else {
-            actions +=
-              '<button class="btn btn-icon ' + (account.status === "Active" ? "btn-icon--danger" : "btn-icon--success") + '" type="button" data-toggle="' + UI.escape(account.id) + '" title="' + (account.status === "Active" ? "Deactivate account" : "Activate account") + '" aria-label="' + (account.status === "Active" ? "Deactivate account" : "Activate account") + '"><i class="bi bi-' + (account.status === "Active" ? "pause" : "play") + '"></i></button>';
-            actions +=
-              ' <button class="btn btn-icon btn-icon--danger" type="button" data-delete="' + UI.escape(account.id) + '" title="Delete staff (kept in archive)" aria-label="Delete staff"><i class="bi bi-trash3"></i></button>';
-          }
+          var staffId = account.staffId || account.employeeId || "\u2014";
+          var created = account.createdAt || account.joined;
+          var lastPasswordChange = account.lastPasswordChange
+            ? Store.formatDate(account.lastPasswordChange)
+            : account.mustChangePassword
+            ? '<span class="text-app-muted">Default password pending</span>'
+            : '<span class="text-app-muted">\u2014</span>';
 
           return (
             '<tr data-id="' + UI.escape(account.id) + '">' +
@@ -178,17 +242,23 @@
             '<div class="avatar-cell">' +
             '<span class="avatar ' + UI.avatarClass(account.role) + '">' + UI.escape(initials) + "</span>" +
             "<div>" +
-            '<span class="avatar-cell__name">' + UI.escape(account.name) + (protectedRow ? ' <i class="bi bi-patch-check-fill text-app-success" title="Protected account" aria-label="Protected account"></i>' : "") + "</span>" +
-            '<span class="avatar-cell__meta">' + UI.escape(account.email || "No Gmail added") + "</span>" +
-            '<span class="avatar-cell__meta">' + (account.email ? (account.emailVerified ? '<i class="bi bi-patch-check-fill text-app-success" aria-hidden="true"></i> Gmail verified' : '<i class="bi bi-envelope-exclamation" aria-hidden="true"></i> Gmail not verified') : "") + "</span>" +
+            '<span class="avatar-cell__name">' + UI.escape(account.name) +
+            (protectedRow ? ' <i class="bi bi-patch-check-fill text-app-success" title="Protected account" aria-label="Protected account"></i>' : "") +
+            "</span>" +
+            '<span class="avatar-cell__meta">' + UI.escape(account.email || "No email added") +
+            (account.email ? ' &middot; ' + UI.escape(account.emailVerified ? "Verified" : "Not verified") : "") + "</span>" +
+            '<span class="avatar-cell__meta">' + (account.username ? "@" + UI.escape(account.username) : "\u2014") + "</span>" +
             "</div></div></td>" +
-            '<td class="text-tabular">' + UI.escape(account.employeeId) + "</td>" +
-            '<td class="text-nowrap"><span style="font-family:Consolas,monospace;font-size:.8rem">@' + UI.escape(account.username || "\u2014") + "</span></td>" +
+            '<td class="text-tabular">' + UI.escape(staffId) + "</td>" +
             "<td>" + UI.roleBadge(account.role) + "</td>" +
             '<td class="text-nowrap">' + UI.escape(account.phone || "\u2014") + "</td>" +
-            '<td class="text-nowrap" data-sort-value="' + UI.escape(account.lastActive || "") + '">' + (account.status === "Pending" ? '<span class="text-app-muted">Awaiting activation</span>' : Store.formatDateTime(account.lastActive)) + "</td>" +
-            "<td>" + UI.statusBadge(account.status, statusVariant) + "</td>" +
-            '<td class="text-end text-nowrap">' + actions + "</td>" +
+            '<td class="text-nowrap" data-sort-value="' + UI.escape(created || "") + '">' +
+            (created ? Store.formatDate(created) : '<span class="text-app-muted">\u2014</span>') + "</td>" +
+            '<td class="text-nowrap">' + lastPasswordChange + "</td>" +
+            '<td class="text-nowrap" data-sort-value="' + UI.escape(account.lastActive || "") + '">' +
+            (account.status === "Pending" ? '<span class="text-app-muted">Awaiting activation</span>' : Store.formatDateTime(account.lastActive)) + "</td>" +
+            "<td>" + UI.statusBadge(status.label, status.variant) + "</td>" +
+            '<td class="text-end text-nowrap">' + renderActions(account) + "</td>" +
             "</tr>"
           );
         })
@@ -208,16 +278,15 @@
 
   /* -------------------------------- Accounts ------------------------------ */
 
-  function nextEmployeeId(role) {
-    var prefix = role === "Cashier" ? "CST-" : "INV-";
+  function nextStaffId() {
     var highest = 0;
     Store.data.accounts.forEach(function (account) {
-      if (account.employeeId && account.employeeId.indexOf(prefix) === 0) {
-        var value = Number(account.employeeId.replace(prefix, ""));
-        if (!isNaN(value)) highest = Math.max(highest, value);
-      }
+      [account.staffId, account.employeeId].forEach(function (value) {
+        var match = /^STF-(\d+)$/i.exec(String(value || ""));
+        if (match) highest = Math.max(highest, Number(match[1]) || 0);
+      });
     });
-    return prefix + String(highest + 1).padStart(3, "0");
+    return "STF-" + String(highest + 1).padStart(3, "0");
   }
 
   function roleHelpText(role) {
@@ -231,19 +300,22 @@
     return String(value == null ? "" : value).trim().toLowerCase();
   }
 
-  function suggestUsername(name) {
-    return normalizeUsername(name)
-      .replace(/[^a-z0-9]+/g, ".")
-      .replace(/^\.+|\.+$/g, "")
-      .replace(/\.{2,}/g, ".");
-  }
-
   function usernameTaken(value) {
     var key = normalizeUsername(value);
     if (!key) return false;
     return Store.data.accounts.some(function (account) {
       return account.id !== editingId && normalizeUsername(account.username) === key;
     });
+  }
+
+  function resetPasswordField() {
+    var input = $("accountPassword");
+    if (!input) return;
+    input.value = "";
+    input.type = "password";
+    input.setCustomValidity("");
+    input.classList.remove("is-invalid");
+    setPasswordVisibility(input, $("toggleAccountPassword"), false);
   }
 
   function openModal(accountId) {
@@ -253,31 +325,32 @@
     form.reset();
     form.classList.remove("was-validated");
 
+    var account = accountId ? Store.findAccount(accountId) : null;
     var roleSelect = $("accountRoleInput");
     var note = $("activationNote");
     var saveLabel = $("saveAccountLabel");
-    var passwordWrap = $("accountPasswordWrap");
+    var emailInput = $("accountEmail");
+    var statusInput = $("accountStatusInput");
+    var passwordSection = $("passwordSection");
     var passwordInput = $("accountPassword");
 
-    $("accountEmployeeId").readOnly = true;
+    resetPasswordField();
 
-    if (accountId) {
-      var account = Store.findAccount(accountId);
-      if (!account) return;
+    if (account) {
       $("accountModalTitle").textContent = "Edit staff account";
       $("accountModalSub").textContent = account.role + " account";
       $("accountName").value = account.name;
-      $("accountEmployeeId").value = account.employeeId;
+      $("accountStaffId").value = account.staffId || account.employeeId || "";
       $("accountUsername").value = account.username || "";
       $("accountEmail").value = account.email || "";
       $("accountPhone").value = account.phone || "";
-      $("accountStatusInput").value = String(account.status || "Active").toLowerCase();
-      passwordInput.value = "";
-      passwordInput.required = false;
-      passwordWrap.classList.add("d-none");
+      statusInput.value = String(account.status || "Active").toLowerCase();
+      statusInput.disabled = false;
       roleSelect.value = account.role;
       usernameTouched = true;
       if (note) note.classList.add("d-none");
+      if (passwordSection) passwordSection.classList.add("d-none");
+      if (passwordInput) passwordInput.required = false;
       if (saveLabel) saveLabel.textContent = "Save changes";
 
       if (account.role === "Admin") {
@@ -292,17 +365,17 @@
       $("accountModalSub").textContent = "Inventory Staff and Cashier accounts only";
       roleSelect.disabled = false;
       roleSelect.value = "Inventory Staff";
-      $("accountStatusInput").value = "active";
-      $("accountEmployeeId").value = nextEmployeeId("Inventory Staff");
+      statusInput.value = "active";
+      statusInput.disabled = false;
+      $("accountStaffId").value = nextStaffId();
       $("accountUsername").value = "";
       $("accountName").value = "";
       $("accountEmail").value = "";
       $("accountPhone").value = "";
-      passwordInput.value = "";
-      passwordInput.required = true;
-      passwordWrap.classList.remove("d-none");
       $("roleHelp").textContent = roleHelpText("Inventory Staff");
       if (note) note.classList.remove("d-none");
+      if (passwordSection) passwordSection.classList.remove("d-none");
+      if (passwordInput) passwordInput.required = true;
       if (saveLabel) saveLabel.textContent = "Create staff account";
     }
 
@@ -311,30 +384,46 @@
 
   function validateAccount() {
     var form = $("accountForm");
-    var valid = form.checkValidity();
+    var emailInput = $("accountEmail");
+    var email = emailInput.value.trim().toLowerCase();
+    var valid = true;
 
-    var email = $("accountEmail").value.trim().toLowerCase();
-    var gmailValid = !email || /^[^@\s]+@gmail\.com$/i.test(email);
-    $("accountEmail").setCustomValidity(gmailValid ? "" : "Enter a Gmail address ending in @gmail.com.");
-    $("accountEmail").classList.toggle("is-invalid", !gmailValid);
+    emailInput.setCustomValidity("");
+    emailInput.classList.remove("is-invalid");
+
     var emailTaken =
       !!email &&
       Store.data.accounts.some(function (account) {
-        return (
-          account.id !== editingId &&
-          String(account.email || "").toLowerCase() === email
-        );
+        return account.id !== editingId && String(account.email || "").toLowerCase() === email;
       });
 
-    var employeeId = $("accountEmployeeId").value.trim().toUpperCase();
+    if (emailTaken) {
+      emailInput.setCustomValidity("This email is already assigned to a team account.");
+      emailInput.classList.add("is-invalid");
+      valid = false;
+    }
+
+    var staffId = $("accountStaffId").value.trim().toUpperCase();
     var idTaken = Store.data.accounts.some(function (account) {
-      return account.id !== editingId && account.employeeId.toUpperCase() === employeeId;
+      if (account.id === editingId) return false;
+      return (
+        String(account.staffId || "").toUpperCase() === staffId ||
+        String(account.employeeId || "").toUpperCase() === staffId
+      );
     });
 
-    var username = normalizeUsername($("accountUsername").value);
-    var duplicateUsername = usernameTaken(username);
-    var usernameField = $("accountUsername");
+    if (idTaken) {
+      $("accountStaffId").setCustomValidity("This Staff ID is already in use.");
+      $("accountStaffId").classList.add("is-invalid");
+      valid = false;
+    } else {
+      $("accountStaffId").setCustomValidity("");
+      $("accountStaffId").classList.remove("is-invalid");
+    }
 
+    var usernameField = $("accountUsername");
+    var username = normalizeUsername(usernameField.value);
+    var duplicateUsername = usernameTaken(username);
     if (duplicateUsername) {
       usernameField.setCustomValidity("This username is already taken.");
       usernameField.classList.add("is-invalid");
@@ -344,35 +433,40 @@
       usernameField.classList.remove("is-invalid");
     }
 
-    $("accountEmail").setCustomValidity(emailTaken ? "Email already in use." : "");
-    $("accountEmail").classList.toggle("is-invalid", emailTaken);
-    $("accountEmployeeId").setCustomValidity(idTaken ? "Employee ID already in use." : "");
-    $("accountEmployeeId").classList.toggle("is-invalid", idTaken);
+    if (!editingId) {
+      var passwordInput = $("accountPassword");
+      var problem = passwordProblem(passwordInput.value);
+      passwordInput.setCustomValidity(problem);
+      passwordInput.classList.toggle("is-invalid", !!problem);
+      if (problem) valid = false;
+    }
+
+    if (!form.checkValidity()) valid = false;
+    form.classList.add("was-validated");
 
     if (emailTaken) {
       notify("warning", "Duplicate email", "That email is already assigned to a team account.");
     }
     if (idTaken) {
-      notify("warning", "Duplicate employee ID", "That employee ID is already in use.");
+      notify("warning", "Duplicate Staff ID", "That Staff ID is already in use. Reload the directory and try again.");
     }
     if (duplicateUsername) {
       notify("warning", "Duplicate username", "Choose a different username; usernames must be unique.");
     }
 
-    form.classList.add("was-validated");
-    return valid && gmailValid && !emailTaken && !idTaken && !duplicateUsername;
+    return valid;
   }
 
   function collectValues() {
     return {
       name: $("accountName").value.trim(),
-      employeeId: $("accountEmployeeId").value.trim().toUpperCase(),
+      staffId: $("accountStaffId").value.trim().toUpperCase(),
       username: normalizeUsername($("accountUsername").value),
       email: $("accountEmail").value.trim().toLowerCase(),
-      password: $("accountPassword").value,
       phone: $("accountPhone").value.trim(),
       role: $("accountRoleInput").value,
       status: $("accountStatusInput").value,
+      password: editingId ? "" : $("accountPassword").value,
     };
   }
 
@@ -401,11 +495,10 @@
     confirmAction({
       title: "Create this staff account?",
       html:
-        "<p class=\"mb-2\">" +
-        "<strong>" + htmlEscape(values.name) + "</strong> will be added as a <strong>" +
-        htmlEscape(values.role) + "</strong> with status <strong>" + htmlEscape(values.status) + "</strong>.</p>" +
-        "<p class=\"mb-0\">They will sign in with username <strong>@" + htmlEscape(values.username) +
-        "</strong> and the password you set. Gmail is optional.</p>",
+        '<p class="mb-2"><strong>' + htmlEscape(values.name) + "</strong> will be added as a <strong>" +
+        htmlEscape(values.role) + "</strong> with status <strong>Active</strong>.</p>" +
+        '<p class="mb-2">Sign-in email: <strong>' + htmlEscape(values.email) + "</strong></p>" +
+        '<p class="mb-0">They must replace the default password the first time they sign in before any dashboard opens.</p>',
       icon: "question",
       confirmText: "Create account",
       cancelText: "Review details",
@@ -418,24 +511,26 @@
         return;
       }
 
-      $("accountPassword").value = "";
       bootstrap.Modal.getOrCreateInstance($("accountModal")).hide();
       renderAll();
-      values.employeeId = result.account && result.account.employeeId ? result.account.employeeId : values.employeeId;
-      values.status = result.account && result.account.status ? result.account.status : values.status;
+      values.staffId = result.account && result.account.staffId ? result.account.staffId : values.staffId;
+      values.username = result.account && result.account.username ? result.account.username : values.username;
+      values.status = result.account && result.account.status ? result.account.status : "Active";
       showAccountCreated(values, result.message || "The staff account is ready to use.");
     });
   }
 
   function showAccountCreated(values, message) {
     var body =
-      "<p class=\"mb-2\"><strong>" + htmlEscape(values.name) + "</strong> was created as a <strong>" +
+      '<p class="mb-2"><strong>' + htmlEscape(values.name) + "</strong> was created as a <strong>" +
       htmlEscape(values.role) + "</strong> account and is <strong>" + htmlEscape(values.status) + "</strong>.</p>" +
-      "<p class=\"mb-2\">Staff ID: <strong>" + htmlEscape(values.employeeId) + "</strong><br>Username: <strong>@" +
-      htmlEscape(values.username) + "</strong></p>" +
-      "<p class=\"mb-0\">" + htmlEscape(message) + (values.email
-        ? " Gmail <strong>" + htmlEscape(values.email) + "</strong> is not verified yet; the staff member can verify it from their profile."
-        : " They can add and verify Gmail later from their profile.") + "</p>";
+      '<div style="display:grid;gap:6px;text-align:left;margin:0 0 12px">' +
+      '<div><span style="opacity:.7">Staff ID:</span> <strong>' + htmlEscape(values.staffId) + "</strong></div>" +
+      '<div><span style="opacity:.7">Sign-in email:</span> <strong>' + htmlEscape(values.email) + "</strong></div>" +
+      '<div><span style="opacity:.7">Username:</span> <strong>@' + htmlEscape(values.username) + "</strong></div>" +
+      '<div><span style="opacity:.7">Default password:</span> <code style="font-size:.95em">' + htmlEscape(values.password) + "</code></div>" +
+      "</div>" +
+      '<p class="mb-0" style="font-size:.85rem;opacity:.8">Share these details securely. The password is not stored in readable form and cannot be shown again.</p>';
 
     if (hasSwal()) {
       window.Swal.fire({
@@ -449,85 +544,74 @@
     UI.toast(values.name + "'s account is ready.", { title: "Account created" });
   }
 
-  function resendActivation(id) {
+  /* ----------------------------- Reset password --------------------------- */
+
+  function openResetModal(id) {
     var account = Store.findAccount(id);
     if (!account) return;
-
-    confirmAction({
-      title: "Resend activation link?",
-      text:
-        account.name + " will receive a new activation link by email. Any earlier link stops working.",
-      icon: "question",
-      confirmText: "Resend link",
-      cancelText: "Cancel",
-    }).then(function (confirmed) {
-      if (!confirmed) return;
-      var result = Store.resendActivation(id);
-      if (!result.ok) {
-        notify("error", "Link not sent", result.message);
-        return;
-      }
-      renderAll();
-      renderActivations();
-      if (result.activation && result.activation.sent === false) {
-        notify("warning", "Email not sent", result.activation.error || result.message);
-      } else {
-        notify("success", "Activation link sent", "A fresh link is on its way to " + account.email + ".");
-      }
-    });
-  }
-
-  function cancelActivation(id) {
-    var account = Store.findAccount(id);
-    if (!account) return;
-
-    confirmAction({
-      title: "Cancel this invitation?",
-      text:
-        account.name + " will no longer be able to activate the account with the emailed link. You can create a new invitation later.",
-      icon: "warning",
-      confirmText: "Cancel invitation",
-      cancelText: "Keep invitation",
-    }).then(function (confirmed) {
-      if (!confirmed) return;
-      var result = Store.cancelActivation(id);
-      if (!result.ok) {
-        notify("error", "Invitation not cancelled", result.message);
-        return;
-      }
-      renderAll();
-      renderActivations();
-      notify("success", "Invitation cancelled", account.name + " is now inactive.");
-    });
-  }
-
-  function toggleAccount(id) {
-    var account = Store.findAccount(id);
-    if (!account) return;
-    if (isProtected(account)) {
-      notify("warning", "Protected account", "Administrator accounts cannot be deactivated.");
+    if (account.role === "Admin") {
+      notify("warning", "Protected account", "The Administrator password is managed through the profile page.");
       return;
     }
 
-    var activating = account.status !== "Active";
-    confirmAction({
-      title: (activating ? "Activate" : "Deactivate") + " account?",
-      text: activating
-        ? account.name + " will regain access to the console."
-        : account.name + " will no longer be able to sign in. Their past sales and attendance records stay intact.",
-      confirmText: activating ? "Activate account" : "Deactivate account",
-      cancelText: "Cancel",
-      icon: "question",
-    }).then(function (confirmed) {
-      if (!confirmed) return;
-      var result = Store.setAccountStatus(id, activating);
-      if (!result.ok) {
-        notify("error", "Account not updated", result.message);
-        return;
-      }
-      renderAll();
-      notify(activating ? "success" : "warning", "Account updated", account.name + " is now " + (activating ? "active" : "inactive") + ".");
-    });
+    resetTargetId = id;
+    $("resetPasswordSub").textContent = account.name + " \u00B7 " + (account.staffId || account.employeeId || "");
+    var input = $("resetPasswordInput");
+    input.value = "";
+    input.setCustomValidity("");
+    input.classList.remove("is-invalid");
+    setPasswordVisibility(input, $("toggleResetPassword"), false);
+    bootstrap.Modal.getOrCreateInstance($("resetPasswordModal")).show();
+  }
+
+  function submitResetPassword(event) {
+    event.preventDefault();
+    if (!resetTargetId) return;
+
+    var account = Store.findAccount(resetTargetId);
+    var input = $("resetPasswordInput");
+    var value = input.value;
+    var problem = value ? passwordProblem(value) : "";
+
+    input.setCustomValidity(problem);
+    input.classList.toggle("is-invalid", !!problem);
+    if (problem) {
+      notify("warning", "Check the password", problem);
+      return;
+    }
+
+    var result = Store.resetAccountPassword(resetTargetId, value);
+    if (!result.ok) {
+      notify("error", "Password not reset", result.message);
+      return;
+    }
+
+    bootstrap.Modal.getOrCreateInstance($("resetPasswordModal")).hide();
+    renderAll();
+    resetTargetId = null;
+    showResetResult(account, result.password);
+  }
+
+  function showResetResult(account, password) {
+    var name = account ? account.name : "The staff member";
+    var body =
+      '<p class="mb-2">A new temporary password was issued for <strong>' + htmlEscape(name) + "</strong>.</p>" +
+      '<p class="mb-2">They must change it the next time they sign in. Any active sessions were signed out.</p>' +
+      (password
+        ? '<p class="mb-0">Temporary password: <code style="font-size:.95em">' + htmlEscape(password) +
+          "</code></p><p class=\"mb-0\" style=\"font-size:.82rem;opacity:.75\">Copy it now; it cannot be shown again.</p>"
+        : '<p class="mb-0" style="font-size:.85rem;opacity:.8">Share the password you entered with the staff member securely.</p>');
+
+    if (hasSwal()) {
+      window.Swal.fire({
+        icon: "success",
+        title: "Password reset",
+        html: body,
+        confirmButtonText: "Got it",
+      });
+      return;
+    }
+    notify("success", "Password reset", name + " must choose a new password on next sign-in.");
   }
 
   /* --------------------------- Pending activations ------------------------ */
@@ -602,6 +686,85 @@
       .join("");
   }
 
+  function resendActivation(id) {
+    var account = Store.findAccount(id);
+    if (!account) return;
+
+    confirmAction({
+      title: "Resend activation link?",
+      text: account.name + " will receive a new activation link by email. Any earlier link stops working.",
+      icon: "question",
+      confirmText: "Resend link",
+      cancelText: "Cancel",
+    }).then(function (confirmed) {
+      if (!confirmed) return;
+      var result = Store.resendActivation(id);
+      if (!result.ok) {
+        notify("error", "Link not sent", result.message);
+        return;
+      }
+      renderAll();
+      renderActivations();
+      if (result.activation && result.activation.sent === false) {
+        notify("warning", "Email not sent", result.activation.error || result.message);
+      } else {
+        notify("success", "Activation link sent", "A fresh link is on its way to " + account.email + ".");
+      }
+    });
+  }
+
+  function cancelActivation(id) {
+    var account = Store.findAccount(id);
+    if (!account) return;
+
+    confirmAction({
+      title: "Cancel this invitation?",
+      text: account.name + " will no longer be able to activate the account with the emailed link. You can create a new invitation later.",
+      icon: "warning",
+      confirmText: "Cancel invitation",
+      cancelText: "Keep invitation",
+    }).then(function (confirmed) {
+      if (!confirmed) return;
+      var result = Store.cancelActivation(id);
+      if (!result.ok) {
+        notify("error", "Invitation not cancelled", result.message);
+        return;
+      }
+      renderAll();
+      renderActivations();
+      notify("success", "Invitation cancelled", account.name + " is now inactive.");
+    });
+  }
+
+  function toggleAccount(id) {
+    var account = Store.findAccount(id);
+    if (!account) return;
+    if (isProtected(account)) {
+      notify("warning", "Protected account", "Administrator accounts cannot be deactivated.");
+      return;
+    }
+
+    var activating = account.status !== "Active";
+    confirmAction({
+      title: (activating ? "Activate" : "Deactivate") + " account?",
+      text: activating
+        ? account.name + " will regain access to the console."
+        : account.name + " will no longer be able to sign in. Their past sales and attendance records stay intact.",
+      confirmText: activating ? "Activate account" : "Deactivate account",
+      cancelText: "Cancel",
+      icon: "question",
+    }).then(function (confirmed) {
+      if (!confirmed) return;
+      var result = Store.setAccountStatus(id, activating);
+      if (!result.ok) {
+        notify("error", "Account not updated", result.message);
+        return;
+      }
+      renderAll();
+      notify(activating ? "success" : "warning", "Account updated", account.name + " is now " + (activating ? "active" : "inactive") + ".");
+    });
+  }
+
   /* ----------------------------- Archived staff --------------------------- */
 
   var archivedRows = [];
@@ -646,7 +809,7 @@
           '<span class="avatar-cell__name">' + UI.escape(account.fullName || account.name) + "</span>" +
           '<span class="avatar-cell__meta">' + UI.escape(account.username ? "@" + account.username : "\u2014") + " &middot; " + UI.escape(account.email || "\u2014") + "</span>" +
           "</div></div></td>" +
-          '<td class="text-tabular">' + UI.escape(account.employeeId) + "</td>" +
+          '<td class="text-tabular">' + UI.escape(account.staffId || account.employeeId) + "</td>" +
           "<td>" + UI.roleBadge(roleLabel) + "</td>" +
           '<td class="text-nowrap">' + (account.dateJoined ? UI.escape(Store.formatDate(account.dateJoined)) : '<span class="text-app-muted">\u2014</span>') + "</td>" +
           '<td class="text-nowrap">' + (account.deletedAt ? UI.escape(Store.formatDateTime(account.deletedAt)) : '<span class="text-app-muted">\u2014</span>') + "</td>" +
@@ -664,13 +827,14 @@
 
     var rows = [
       ["Staff member", account.fullName || account.name],
-      ["Employee ID", account.employeeId],
+      ["Staff ID", account.staffId || account.employeeId],
       ["Username", "@" + (account.username || "\u2014")],
-      ["Work email", account.email || "\u2014"],
+      ["Personal email", account.email || "\u2014"],
       ["Phone", account.contactNumber || "\u2014"],
       ["Role", account.roleLabel || account.role || "\u2014"],
       ["Work schedule", STANDARD_SCHEDULE],
       ["Date joined", account.dateJoined ? Store.formatDate(account.dateJoined) : "\u2014"],
+      ["Last password change", account.lastPasswordChange ? Store.formatDate(account.lastPasswordChange) : "\u2014"],
       ["Last active", account.lastLoginAt ? Store.formatDateTime(account.lastLoginAt) : "Never signed in"],
       ["Deleted on", account.deletedAt ? Store.formatDateTime(account.deletedAt) : "\u2014"],
       ["Deleted by", account.deletedBy || "Administrator"],
@@ -713,8 +877,8 @@
     confirmAction({
       title: "Restore this staff record?",
       html:
-        "<p class=\"mb-2\"><strong>" + htmlEscape(name) + "</strong> will return to the team directory with all saved details.</p>" +
-        "<p class=\"mb-0\">The account comes back as <strong>Inactive</strong>. Activate it when the staff member is ready to sign in again.</p>",
+        '<p class="mb-2"><strong>' + htmlEscape(name) + "</strong> will return to the team directory with all saved details.</p>" +
+        '<p class="mb-0">The account comes back as <strong>Inactive</strong>. Activate it when the staff member is ready to sign in again.</p>',
       icon: "question",
       confirmText: "Restore record",
       cancelText: "Cancel",
@@ -744,9 +908,9 @@
     confirmAction({
       title: "Delete this staff account?",
       html:
-        "<p class=\"mb-2\"><strong>" + htmlEscape(account.name) + "</strong> (" + htmlEscape(account.employeeId) + ") will be removed from the team directory and can no longer sign in.</p>" +
-        "<p class=\"mb-2\">Nothing is erased: personal details, sales, attendance and audit history are kept in <strong>Archived staff</strong>.</p>" +
-        "<p class=\"mb-0\">You can restore the record later if needed.</p>",
+        '<p class="mb-2"><strong>' + htmlEscape(account.name) + "</strong> (" + htmlEscape(account.staffId || account.employeeId) + ") will be removed from the team directory and can no longer sign in.</p>" +
+        '<p class="mb-2">Nothing is erased: personal details, sales, attendance and audit history are kept in <strong>Archived staff</strong>.</p>' +
+        '<p class="mb-0">You can restore the record later if needed.</p>',
       icon: "warning",
       confirmText: "Delete and archive",
       cancelText: "Keep account",
@@ -761,11 +925,7 @@
 
       renderAll();
       renderArchived();
-      notify(
-        "success",
-        "Account deleted",
-        account.name + " was moved to Archived staff as a backup."
-      );
+      notify("success", "Account deleted", account.name + " was moved to Archived staff as a backup.");
     });
   }
 
@@ -773,20 +933,21 @@
     var rows = filteredAccounts().map(function (account) {
       return [
         account.name,
-        account.employeeId,
+        account.staffId || account.employeeId || "",
         account.username || "",
         account.email || "",
         account.phone || "",
         account.role,
-        account.status,
-        account.joined,
+        displayStatus(account),
+        account.createdAt || account.joined || "",
+        account.lastPasswordChange || "",
         account.lastActive || "",
       ];
     });
 
     UI.exportCSV(
       "guinhawa-accounts-" + Store.todayISO() + ".csv",
-      ["Name", "Employee ID", "Username", "Email", "Phone", "Role", "Status", "Joined", "Last active"],
+      ["Name", "Staff ID", "Username", "Email", "Phone", "Role", "Status", "Created", "Last password change", "Last active"],
       rows
     );
     UI.toast("Account CSV exported.", {
@@ -829,21 +990,51 @@
 
     $("exportAccounts").addEventListener("click", exportAccounts);
     $("accountForm").addEventListener("submit", saveAccount);
+    $("resetPasswordForm").addEventListener("submit", submitResetPassword);
 
     $("accountRoleInput").addEventListener("change", function (event) {
       $("roleHelp").textContent = roleHelpText(event.target.value);
-      if (!editingId) {
-        $("accountEmployeeId").value = nextEmployeeId(event.target.value);
-      }
     });
 
-    $("accountName").addEventListener("input", function () {
-      if (editingId || usernameTouched) return;
-      $("accountUsername").value = suggestUsername(this.value);
+    $("accountEmail").addEventListener("input", function () {
+      this.setCustomValidity("");
+      this.classList.remove("is-invalid");
     });
 
     $("accountUsername").addEventListener("input", function () {
       usernameTouched = true;
+      this.setCustomValidity("");
+      this.classList.remove("is-invalid");
+    });
+
+    $("toggleAccountPassword").addEventListener("click", function () {
+      var input = $("accountPassword");
+      setPasswordVisibility(input, this, input.type === "password");
+    });
+
+    $("generateAccountPassword").addEventListener("click", function () {
+      var input = $("accountPassword");
+      input.value = randomPassword();
+      input.setCustomValidity("");
+      input.classList.remove("is-invalid");
+      setPasswordVisibility(input, $("toggleAccountPassword"), true);
+      notify("info", "Password generated", "Share it securely. The staff member must change it on first sign-in.");
+    });
+
+    $("toggleResetPassword").addEventListener("click", function () {
+      var input = $("resetPasswordInput");
+      setPasswordVisibility(input, this, input.type === "password");
+    });
+
+    $("generateResetPassword").addEventListener("click", function () {
+      var input = $("resetPasswordInput");
+      input.value = randomPassword();
+      input.setCustomValidity("");
+      input.classList.remove("is-invalid");
+      setPasswordVisibility(input, $("toggleResetPassword"), true);
+    });
+
+    $("resetPasswordInput").addEventListener("input", function () {
       this.setCustomValidity("");
       this.classList.remove("is-invalid");
     });
@@ -854,14 +1045,9 @@
         openModal(editButton.getAttribute("data-edit"));
         return;
       }
-      var resendButton = event.target.closest("[data-resend]");
-      if (resendButton) {
-        resendActivation(resendButton.getAttribute("data-resend"));
-        return;
-      }
-      var cancelButton = event.target.closest("[data-cancel]");
-      if (cancelButton) {
-        cancelActivation(cancelButton.getAttribute("data-cancel"));
+      var resetButton = event.target.closest("[data-reset]");
+      if (resetButton) {
+        openResetModal(resetButton.getAttribute("data-reset"));
         return;
       }
       var toggleButton = event.target.closest("[data-toggle]");
@@ -907,9 +1093,20 @@
 
     $("accountModal").addEventListener("hidden.bs.modal", function () {
       editingId = null;
+      usernameTouched = false;
       var roleSelect = $("accountRoleInput");
       roleSelect.disabled = false;
       $("accountForm").classList.remove("was-validated");
+      resetPasswordField();
+    });
+
+    $("resetPasswordModal").addEventListener("hidden.bs.modal", function () {
+      resetTargetId = null;
+      var input = $("resetPasswordInput");
+      input.value = "";
+      input.setCustomValidity("");
+      input.classList.remove("is-invalid");
+      setPasswordVisibility(input, $("toggleResetPassword"), false);
     });
   }
 

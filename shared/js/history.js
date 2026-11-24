@@ -77,10 +77,10 @@
       return String(entry.date).slice(0, 10) === Store.todayISO();
     }).length;
 
-    $("statMovements").textContent = Store.number(history.length);
-    $("statIn").textContent = Store.number(inUnits);
-    $("statOut").textContent = Store.number(outUnits);
-    $("statToday").textContent = Store.number(today);
+    $("histStatMovements").textContent = Store.number(history.length);
+    $("histStatIn").textContent = Store.number(inUnits);
+    $("histStatOut").textContent = Store.number(outUnits);
+    $("histStatToday").textContent = Store.number(today);
   }
 
   function productThumb(entry) {
@@ -179,48 +179,53 @@
 
   /* --------------------------------- Events ------------------------------- */
 
-  function bindEvents() {
-    $("historySearch").addEventListener(
-      "input",
-      UI.debounce(function (event) {
-        state.search = event.target.value;
-        renderTable();
-      }, 160)
-    );
+  function on(id, eventName, handler) {
+    var element = $(id);
+    if (element) element.addEventListener(eventName, handler);
+  }
 
-    $("historyType").addEventListener("change", function (event) {
+  function bindEvents() {
+    on("historySearch", "input", UI.debounce(function (event) {
+      state.search = event.target.value;
+      renderTable();
+    }, 160));
+
+    on("historyType", "change", function (event) {
       state.type = event.target.value;
       renderTable();
     });
 
-    $("historyFrom").addEventListener("change", function (event) {
+    on("historyFrom", "change", function (event) {
       state.from = event.target.value;
       renderTable();
     });
 
-    $("historyTo").addEventListener("change", function (event) {
+    on("historyTo", "change", function (event) {
       state.to = event.target.value;
       renderTable();
     });
 
-    $("clearHistoryFilters").addEventListener("click", function () {
+    on("clearHistoryFilters", "click", function () {
       state = { search: "", type: "", from: "", to: "" };
-      $("historySearch").value = "";
-      $("historyType").value = "";
-      $("historyFrom").value = "";
-      $("historyTo").value = "";
+      if ($("historySearch")) $("historySearch").value = "";
+      if ($("historyType")) $("historyType").value = "";
+      if ($("historyFrom")) $("historyFrom").value = "";
+      if ($("historyTo")) $("historyTo").value = "";
       renderTable();
     });
 
-    $("exportHistory").addEventListener("click", exportHistory);
+    on("exportHistory", "click", exportHistory);
   }
 
   /* ---------------------------------- Init -------------------------------- */
 
   function init() {
+    if (!$("historyBody")) return;
     renderAll();
     bindEvents();
   }
+
+  window.GuinhawaHistory = { render: renderAll };
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);

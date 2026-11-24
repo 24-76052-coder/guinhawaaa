@@ -8,6 +8,8 @@
   var Store = window.GuinhawaStore;
   var UI = window.GuinhawaUI;
   if (!Store || !UI) return;
+  var savedMailSender = "";
+  var mailPasswordConfigured = false;
 
   var $ = function (id) {
     return document.getElementById(id);
@@ -15,9 +17,209 @@
 
   /* -------------------------------- Profile ------------------------------- */
 
+  var PROFILE_PHOTO_MAX_BYTES = 5 * 1024 * 1024;
+  var avatarCropSource = null;
+  var avatarCropZoom = 1;
+  var avatarCropOffsetX = 0;
+  var avatarCropOffsetY = 0;
+  var avatarCropDrag = null;
+  var avatarCropFrame = { x: 0, y: 0, size: 0 };
+
+  function renderAvatarElement(element, avatar, name) {
+    if (!element) return;
+    var source = String(avatar || "");
+    element.replaceChildren();
+    if (/^(?:https?:\/\/|\/|data:image\/(?:png|jpeg|jpg|webp);base64,)/i.test(source)) {
+      var image = document.createElement("img");
+      image.alt = "";
+      image.style.display = "block";
+      image.style.width = "100%";
+      image.style.height = "100%";
+      image.style.objectFit = "cover";
+      image.src = source;
+      image.addEventListener("error", function () {
+        element.textContent = UI.initials(name);
+      }, { once: true });
+      element.appendChild(image);
+      return;
+    }
+    element.textContent = UI.initials(name);
+  }
+
+  function renderProfileAvatar(user) {
+    var preview = $("profileAvatarPreview");
+    if (!preview || !user) return;
+    renderAvatarElement(preview, user.avatar, user.name);
+    renderAvatarElement(document.querySelector(".user-menu .avatar"), user.avatar, user.name);
+  }
+
+  function avatarCropMetrics() {
+    if (!avatarCropSource) return;
+    var viewport = $("avatarCropStage");
+    var size = viewport.clientWidth;
+    if (!size) return null;
+    var scale = Math.max(size / avatarCropSource.naturalWidth, size / avatarCropSource.naturalHeight) * avatarCropZoom;
+    var width = avatarCropSource.naturalWidth * scale;
+    var height = avatarCropSource.naturalHeight * scale;
+    return { size: size, scale: scale, width: width, height: height };
+  }
+
+  function clampAvatarCrop(metrics) {
+    var maxFrame = Math.min(metrics.size, metrics.width, metrics.height);
+    if (!avatarCropFrame.size) {
+      avatarCropFrame.size = maxFrame * 0.76;
+      avatarCropFrame.x = (metrics.size - avatarCropFrame.size) / 2;
+      avatarCropFrame.y = (metrics.size - avatarCropFrame.size) / 2;
+    }
+    avatarCropFrame.size = Math.max(Math.min(72, maxFrame), Math.min(maxFrame, avatarCropFrame.size));
+    avatarCropFrame.x = Math.max(0, Math.min(metrics.size - avatarCropFrame.size, avatarCropFrame.x));
+    avatarCropFrame.y = Math.max(0, Math.min(metrics.size - avatarCropFrame.size, avatarCropFrame.y));
+
+    var minOffsetX = avatarCropFrame.x + avatarCropFrame.size - metrics.size / 2 - metrics.width / 2;
+    var maxOffsetX = avatarCropFrame.x - metrics.size / 2 + metrics.width / 2;
+    var minOffsetY = avatarCropFrame.y + avatarCropFrame.size - metrics.size / 2 - metrics.height / 2;
+    var maxOffsetY = avatarCropFrame.y - metrics.size / 2 + metrics.height / 2;
+    avatarCropOffsetX = Math.max(minOffsetX, Math.min(maxOffsetX, avatarCropOffsetX));
+    avatarCropOffsetY = Math.max(minOffsetY, Math.min(maxOffsetY, avatarCropOffsetY));
+  }
+
+  function cropSourceRect(metrics) {
+    var imageLeft = metrics.size / 2 + avatarCropOffsetX - metrics.width / 2;
+    var imageTop = metrics.size / 2 + avatarCropOffsetY - metrics.height / 2;
+    var side = Math.min(
+      avatarCropSource.naturalWidth,
+      avatarCropSource.naturalHeight,
+      avatarCropFrame.size / metrics.scale
+    );
+    var x = (avatarCropFrame.x - imageLeft) / metrics.scale;
+    var y = (avatarCropFrame.y - imageTop) / metrics.scale;
+    x = Math.max(0, Math.min(avatarCropSource.naturalWidth - side, x));
+    y = Math.max(0, Math.min(avatarCropSource.naturalHeight - side, y));
+    return { x: x, y: y, side: side };
+  }
+
+  function updateAvatarCropPreview() {
+    var metrics = avatarCropMetrics();
+    if (!metrics) return;
+    clampAvatarCrop(metrics);
+    var image = $("avatarCropImage");
+    var frame = $("avatarCropFrame");
+    var imageLeft = metrics.size / 2 + avatarCropOffsetX - metrics.width / 2;
+    var imageTop = metrics.size / 2 + avatarCropOffsetY - metrics.height / 2;
+
+    image.style.width = metrics.width + "px";
+    image.style.height = metrics.height + "px";
+    image.style.left = "calc(50% + " + avatarCropOffsetX + "px)";
+    image.style.top = "calc(50% + " + avatarCropOffsetY + "px)";
+    frame.style.left = avatarCropFrame.x + "px";
+    frame.style.top = avatarCropFrame.y + "px";
+    frame.style.width = avatarCropFrame.size + "px";
+    frame.style.height = avatarCropFrame.size + "px";
+
+    var preview = $("avatarCropPreview");
+    var context = preview.getContext("2d");
+    if (context) {
+      var crop = cropSourceRect(metrics);
+      context.clearRect(0, 0, preview.width, preview.height);
+      context.drawImage(avatarCropSource, crop.x, crop.y, crop.side, crop.side, 0, 0, preview.width, preview.height);
+    }
+  }
+
+  function showAvatarCrop(image) {
+    avatarCropSource = image;
+    avatarCropZoom = 1;
+    avatarCropOffsetX = 0;
+    avatarCropOffsetY = 0;
+    avatarCropFrame = { x: 0, y: 0, size: 0 };
+    $("avatarCropImage").src = image.src;
+    $("avatarCropZoom").value = "1";
+    $("avatarCropModal").hidden = false;
+    window.requestAnimationFrame(updateAvatarCropPreview);
+    $("saveAvatarCrop").focus();
+  }
+
+  function closeAvatarCrop() {
+    $("avatarCropModal").hidden = true;
+    avatarCropSource = null;
+    avatarCropDrag = null;
+  }
+
+  function resetAvatarCrop() {
+    if (!avatarCropSource) return;
+    avatarCropZoom = 1;
+    avatarCropOffsetX = 0;
+    avatarCropOffsetY = 0;
+    avatarCropFrame = { x: 0, y: 0, size: 0 };
+    $("avatarCropZoom").value = "1";
+    updateAvatarCropPreview();
+  }
+
+  function saveAvatarCrop() {
+    if (!avatarCropSource) return;
+    var metrics = avatarCropMetrics();
+    if (!metrics) return;
+    clampAvatarCrop(metrics);
+    var crop = cropSourceRect(metrics);
+    var canvas = document.createElement("canvas");
+    canvas.width = 512;
+    canvas.height = 512;
+    var context = canvas.getContext("2d");
+    if (!context) {
+      UI.toast("Your browser could not prepare this image.", { type: "danger", title: "Image unavailable" });
+      return;
+    }
+    context.drawImage(avatarCropSource, crop.x, crop.y, crop.side, crop.side, 0, 0, 512, 512);
+    var croppedAvatar = canvas.toDataURL("image/jpeg", 0.82);
+    var user = Store.getCurrentUser();
+    var button = $("saveAvatarCrop");
+    button.disabled = true;
+    var result = Store.saveProfile({ name: user.name, phone: user.phone, avatar: croppedAvatar });
+    button.disabled = false;
+    if (!result.ok) {
+      UI.toast(result.message || "The profile picture could not be saved.", { type: "danger", title: "Avatar not saved" });
+      return;
+    }
+    closeAvatarCrop();
+    renderUserProfile();
+    UI.toast("Your cropped profile picture was saved.", { title: "Avatar updated" });
+  }
+
+  function prepareProfilePhoto(file) {
+    if (!file) return;
+    if (["image/png", "image/jpeg", "image/webp"].indexOf(file.type) === -1) {
+      UI.toast("Choose a PNG, JPG, or WebP image.", { type: "danger", title: "Unsupported image" });
+      return;
+    }
+    if (file.size > PROFILE_PHOTO_MAX_BYTES) {
+      UI.toast("Choose an image smaller than 5 MB.", { type: "danger", title: "Image is too large" });
+      return;
+    }
+
+    var reader = new FileReader();
+    reader.onerror = function () {
+      UI.toast("The selected image could not be read.", { type: "danger", title: "Image unavailable" });
+    };
+    reader.onload = function () {
+      var image = new Image();
+      image.onerror = function () {
+        UI.toast("The selected file is not a readable image.", { type: "danger", title: "Image unavailable" });
+      };
+      image.onload = function () {
+        if (!image.naturalWidth || !image.naturalHeight) {
+          UI.toast("The selected image has invalid dimensions.", { type: "danger", title: "Image unavailable" });
+          return;
+        }
+        showAvatarCrop(image);
+      };
+      image.src = String(reader.result || "");
+    };
+    reader.readAsDataURL(file);
+  }
+
   function renderUserProfile() {
     var user = Store.getCurrentUser();
     if (!user) return;
+    renderProfileAvatar(user);
     $("profileUsername").textContent = "@" + (user.username || "\u2014");
     if ($("profileEmailDisplay")) $("profileEmailDisplay").textContent = user.email || "\u2014";
     $("profileEmployeeId").textContent = user.employeeId || "\u2014";
@@ -48,7 +250,6 @@
       name: name,
       phone: $("profilePhone").value.trim(),
     };
-    if (user && user.type === "admin") values.email = $("profileEmail").value.trim();
     var result = Store.saveProfile(values);
     if (!result.ok) {
       UI.toast(result.message, { type: "danger", title: "Profile not saved" });
@@ -60,27 +261,30 @@
     document.querySelectorAll(".user-menu__name").forEach(function (element) {
       element.textContent = user.name;
     });
-    var avatar = document.querySelector(".user-menu .avatar");
-    if (avatar) avatar.textContent = UI.initials(user.name);
 
     form.classList.remove("was-validated");
     UI.toast("Your profile details were saved.", { title: "Profile updated" });
   }
 
-  /* --------------------------- Staff Gmail verification ------------------ */
+  /* ------------------------ Staff email verification --------------------- */
 
-  function setStaffEmailStatus(message, tone) {
-    var status = $("staffEmailStatus");
+  function setAccountEmailStatus(message, tone) {
+    var status = $("accountEmailStatus");
     if (!status) return;
     var toneClass = tone === "warning" ? " alert-app--warn" : tone === "danger" ? " alert-app--danger" : "";
     status.className = "alert-app mt-3" + toneClass;
     status.lastElementChild.textContent = message;
   }
 
-  function renderStaffEmailVerification() {
-    var result = Store.getStaffEmailVerification();
+  var accountEmailState = null;
+
+  function renderAccountEmailVerification() {
+    var result = Store.getAccountEmailVerification();
+    accountEmailState = result.ok ? result.verification || null : null;
     if (!result.ok || !result.verification) {
-      setStaffEmailStatus(result.message || "Gmail verification status could not be loaded.", "warning");
+      $("accountEmailCode").disabled = true;
+      $("verifyAccountEmailCode").disabled = true;
+      setAccountEmailStatus(result.message || "Email verification status could not be loaded.", "warning");
       return;
     }
 
@@ -88,27 +292,45 @@
     var verified = verification.verified === true;
     var email = verification.email || "";
     var pendingEmail = verification.pendingEmail || "";
-    $("staffEmailBadge").textContent = verified ? "Verified" : pendingEmail ? "Verification pending" : "Not verified";
-    $("staffEmailCurrent").textContent = email
-      ? email + (verified ? " · Verified" : " · Not verified")
-      : "No Gmail added";
-    $("staffEmailAddress").value = pendingEmail || email;
-    $("staffEmailCodePanel").classList.toggle("d-none", !pendingEmail);
-    $("staffEmailVerifyPanel").classList.toggle("d-none", !pendingEmail);
-    $("requestStaffEmailCode").innerHTML = pendingEmail
+    $("accountEmailBadge").textContent = verified && !pendingEmail ? "Verified" : "Not verified";
+    $("accountEmailCurrent").textContent = email
+      ? email + (verified && !pendingEmail ? " · Verified" : " · Not verified")
+      : "No email added";
+    $("accountEmailAddress").value = pendingEmail || email;
+
+    // The code box is always visible so it is easy to find, but it is only
+    // usable when a code has actually been requested. A verified address with
+    // no pending code never needs verification, so disable it and explain why.
+    var needsCode = !!pendingEmail;
+    var codeInput = $("accountEmailCode");
+    var verifyButton = $("verifyAccountEmailCode");
+    $("accountEmailCodePanel").classList.remove("d-none");
+    $("accountEmailVerifyPanel").classList.remove("d-none");
+    codeInput.disabled = !needsCode;
+    verifyButton.disabled = !needsCode;
+    codeInput.value = "";
+    codeInput.placeholder = needsCode ? "000000" : "No code needed";
+    codeInput.classList.remove("is-invalid");
+    $("accountEmailCodeHelp").textContent = needsCode
+      ? "Type the 6-digit code sent to " + pendingEmail + ". It expires in 10 minutes."
+      : verified
+        ? "Already verified. To use a different address, enter it above and send a code."
+        : "Enter your email above and send a code, then type the 6-digit code here.";
+
+    $("requestAccountEmailCode").innerHTML = needsCode
       ? '<i class="bi bi-arrow-repeat" aria-hidden="true"></i> Resend verification code'
       : '<i class="bi bi-send" aria-hidden="true"></i> Send verification code';
-    if (pendingEmail) {
-      setStaffEmailStatus("A code was sent to " + pendingEmail + ". It expires in 10 minutes.", "warning");
+    if (needsCode) {
+      setAccountEmailStatus("We sent a 6-digit code to " + pendingEmail + ". Enter it below within 10 minutes.", "warning");
     } else if (verified) {
-      setStaffEmailStatus("Your Gmail is verified and can be used for password recovery. You can enter a different Gmail to change it.", "success");
+      setAccountEmailStatus("Your email is verified and ready for sign-in and password recovery. No code needed right now.", "success");
     } else {
-      setStaffEmailStatus("Gmail is optional. A verified Gmail can be used for password recovery.");
+      setAccountEmailStatus("Add your personal email above, send a code, then enter the 6-digit code below. Sign-in works even if the email is not verified.");
     }
   }
 
-  function requestStaffEmailCode() {
-    var input = $("staffEmailAddress");
+  function requestAccountEmailCode() {
+    var input = $("accountEmailAddress");
     if (!input.checkValidity()) {
       input.classList.add("is-invalid");
       input.focus();
@@ -116,25 +338,32 @@
     }
     input.classList.remove("is-invalid");
 
-    var button = $("requestStaffEmailCode");
+    var current = accountEmailState || {};
+    if (!current.pendingEmail && current.verified &&
+        input.value.trim().toLowerCase() === String(current.email || "").toLowerCase()) {
+      setAccountEmailStatus("This is already your verified email. Enter a different address above to change it.", "success");
+      return;
+    }
+
+    var button = $("requestAccountEmailCode");
     button.disabled = true;
-    var result = Store.requestStaffEmailVerification(input.value.trim());
+    var result = Store.requestAccountEmailVerification(input.value.trim());
     button.disabled = false;
     if (!result.ok) {
-      setStaffEmailStatus(result.message || "The verification code could not be sent.", "danger");
+      setAccountEmailStatus(result.message || "The verification code could not be sent.", "danger");
       return;
     }
     if (result.alreadyVerified) {
-      renderStaffEmailVerification();
-      UI.toast("That Gmail address is already verified.", { title: "Gmail verified" });
+      renderAccountEmailVerification();
+      UI.toast("That email address is already verified.", { title: "Email verified" });
       return;
     }
-    renderStaffEmailVerification();
-    setStaffEmailStatus(result.message || "Verification code sent. Check your Gmail inbox and spam folder.", "success");
+    renderAccountEmailVerification();
+    setAccountEmailStatus(result.message || "Verification code sent. Check your inbox and spam folder.", "success");
   }
 
-  function verifyStaffEmailCode() {
-    var input = $("staffEmailCode");
+  function verifyAccountEmailCode() {
+    var input = $("accountEmailCode");
     if (!input.checkValidity()) {
       input.classList.add("is-invalid");
       input.focus();
@@ -142,15 +371,21 @@
     }
     input.classList.remove("is-invalid");
 
-    var result = Store.verifyStaffEmail(input.value.trim());
+    if (!accountEmailState || !accountEmailState.pendingEmail) {
+      setAccountEmailStatus("No code is needed right now. To change your email, enter a new address above and send a code.", "success");
+      input.value = "";
+      return;
+    }
+
+    var result = Store.verifyAccountEmail(input.value.trim());
     if (!result.ok) {
-      setStaffEmailStatus(result.message || "That verification code could not be confirmed.", "danger");
+      setAccountEmailStatus(result.message || "That verification code could not be confirmed.", "danger");
       return;
     }
     input.value = "";
     renderUserProfile();
-    renderStaffEmailVerification();
-    UI.toast("Your Gmail address is verified.", { title: "Gmail verified" });
+    renderAccountEmailVerification();
+    UI.toast("Your email address is verified.", { title: "Email verified" });
   }
 
   /* -------------------------------- Business ------------------------------ */
@@ -727,17 +962,17 @@
 
     var mail = result.mail;
     $("mailSenderEmail").value = mail.username || "";
-    $("mailSenderName").value = mail.fromName || "Guinhawa Agri-Poultry Supply";
-    $("mailTestRecipient").value = mail.fromEmail || mail.username || "";
+    savedMailSender = String(mail.username || "").trim().toLowerCase();
+    mailPasswordConfigured = mail.passwordSet === true;
     $("mailAppPassword").value = "";
     $("mailPasswordHelp").textContent = mail.passwordSet
-      ? "A Google App Password is saved. Leave this blank to keep it, or enter a new one to replace it. The password is never shown."
-      : "No App Password is saved. Enter the Google App Password, not your regular Gmail password. It is stored on the server and never shown again.";
+      ? "An App Password is saved. Leave this blank to keep it, or enter a new one to replace it."
+      : "Enter a Google App Password, not your regular Gmail password.";
 
     if (mail.passwordSet) {
-      setMailStatus("Gmail SMTP is configured. Send a test email to confirm delivery.", "success");
+      setMailStatus("Sender is saved. Send a test email to its inbox to confirm delivery.", "success");
     } else {
-      setMailStatus("Gmail SMTP is not configured yet. Enter a sender address and Google App Password, then save.", "warning");
+      setMailStatus("Enter the sender Gmail and its App Password, then save these settings.", "warning");
     }
   }
 
@@ -749,12 +984,10 @@
       return;
     }
 
-    var testRecipient = $("mailTestRecipient").value.trim();
     var result = Store.saveMailSettings({
       username: $("mailSenderEmail").value.trim(),
       password: $("mailAppPassword").value,
       fromEmail: $("mailSenderEmail").value.trim(),
-      fromName: $("mailSenderName").value.trim(),
     });
     if (!result.ok) {
       setMailStatus(result.message || "Email delivery settings could not be saved.", "danger");
@@ -764,22 +997,29 @@
     form.classList.remove("was-validated");
     $("mailAppPassword").value = "";
     renderMailSettings();
-    if (testRecipient) $("mailTestRecipient").value = testRecipient;
     UI.toast(result.message || "Email delivery settings saved.", { title: "Email settings saved" });
   }
 
   function sendMailTest() {
-    var recipient = $("mailTestRecipient");
-    if (!recipient.checkValidity() || !recipient.value.trim()) {
-      recipient.classList.add("is-invalid");
-      recipient.focus();
+    var sender = $("mailSenderEmail");
+    if (!sender.checkValidity() || !sender.value.trim()) {
+      $("mailSettingsForm").classList.add("was-validated");
+      sender.focus();
+      setMailStatus("Enter and save the sender Gmail before sending a test.", "warning");
       return;
     }
-    recipient.classList.remove("is-invalid");
+    if (
+      !mailPasswordConfigured ||
+      sender.value.trim().toLowerCase() !== savedMailSender ||
+      $("mailAppPassword").value !== ""
+    ) {
+      setMailStatus("Save the sender Gmail and App Password first, then send the test.", "warning");
+      return;
+    }
 
     var button = $("testMailButton");
     button.disabled = true;
-    var result = Store.sendTestMail(recipient.value.trim());
+    var result = Store.sendTestMail(sender.value.trim());
     button.disabled = false;
 
     if (result.test && result.test.sent) {
@@ -1056,23 +1296,98 @@
     bindAppearance();
     bindGcashQr();
 
-    if (signedIn.type === "employee") {
-      $("adminProfileEmailField").classList.add("d-none");
-      $("profileEmail").required = false;
-      $("staffEmailSection").classList.remove("d-none");
-      renderStaffEmailVerification();
-      $("requestStaffEmailCode").addEventListener("click", requestStaffEmailCode);
-      $("verifyStaffEmailCode").addEventListener("click", verifyStaffEmailCode);
-      $("staffEmailAddress").addEventListener("input", function () {
-        this.classList.remove("is-invalid");
+    // Both Admin and Staff manage their own personal email here. Keeping this
+    // panel available to Admin also fixes the only path to verify an Admin email.
+    $("accountEmailSection").classList.remove("d-none");
+    renderAccountEmailVerification();
+    $("requestAccountEmailCode").addEventListener("click", requestAccountEmailCode);
+    $("verifyAccountEmailCode").addEventListener("click", verifyAccountEmailCode);
+    $("accountEmailAddress").addEventListener("input", function () {
+      this.classList.remove("is-invalid");
+    });
+    $("accountEmailCode").addEventListener("input", function () {
+      this.classList.remove("is-invalid");
+      this.value = this.value.replace(/\D/g, "").slice(0, 6);
+    });
+
+    $("profileAvatarPreview").addEventListener("click", function () {
+      $("profilePhotoInput").click();
+    });
+    $("profilePhotoInput").addEventListener("change", function (event) {
+      prepareProfilePhoto(event.target.files && event.target.files[0]);
+      event.target.value = "";
+    });
+    $("avatarCropZoom").addEventListener("input", function () {
+      avatarCropZoom = Number(this.value) || 1;
+      updateAvatarCropPreview();
+    });
+    $("avatarCropStage").addEventListener("pointerdown", function (event) {
+      if (!avatarCropSource) return;
+      event.preventDefault();
+      var handle = event.target.closest(".avatar-crop-handle");
+      if (handle) {
+        var direction = handle.getAttribute("data-handle");
+        var handleX = direction.indexOf("w") !== -1 ? -1 : 1;
+        var handleY = direction.indexOf("n") !== -1 ? -1 : 1;
+        avatarCropDrag = {
+          type: "resize",
+          pointerId: event.pointerId,
+          x: event.clientX,
+          y: event.clientY,
+          handleX: handleX,
+          handleY: handleY,
+          anchorX: handleX < 0 ? avatarCropFrame.x + avatarCropFrame.size : avatarCropFrame.x,
+          anchorY: handleY < 0 ? avatarCropFrame.y + avatarCropFrame.size : avatarCropFrame.y,
+          startSize: avatarCropFrame.size,
+        };
+      } else {
+        avatarCropDrag = {
+          type: "image",
+          pointerId: event.pointerId,
+          x: event.clientX,
+          y: event.clientY,
+          offsetX: avatarCropOffsetX,
+          offsetY: avatarCropOffsetY,
+        };
+      }
+      this.setPointerCapture(event.pointerId);
+    });
+    $("avatarCropStage").addEventListener("pointermove", function (event) {
+      if (!avatarCropDrag || event.pointerId !== avatarCropDrag.pointerId) return;
+      var deltaX = event.clientX - avatarCropDrag.x;
+      var deltaY = event.clientY - avatarCropDrag.y;
+      if (avatarCropDrag.type === "resize") {
+        var metrics = avatarCropMetrics();
+        var maxSize = Math.min(
+          metrics.size,
+          metrics.width,
+          metrics.height,
+          avatarCropDrag.handleX < 0 ? avatarCropDrag.anchorX : metrics.size - avatarCropDrag.anchorX,
+          avatarCropDrag.handleY < 0 ? avatarCropDrag.anchorY : metrics.size - avatarCropDrag.anchorY
+        );
+        var minSize = Math.min(64, maxSize);
+        var change = (avatarCropDrag.handleX * deltaX + avatarCropDrag.handleY * deltaY) / 2;
+        avatarCropFrame.size = Math.max(minSize, Math.min(maxSize, avatarCropDrag.startSize + change));
+        avatarCropFrame.x = avatarCropDrag.handleX < 0 ? avatarCropDrag.anchorX - avatarCropFrame.size : avatarCropDrag.anchorX;
+        avatarCropFrame.y = avatarCropDrag.handleY < 0 ? avatarCropDrag.anchorY - avatarCropFrame.size : avatarCropDrag.anchorY;
+      } else {
+        avatarCropOffsetX = avatarCropDrag.offsetX + deltaX;
+        avatarCropOffsetY = avatarCropDrag.offsetY + deltaY;
+      }
+      updateAvatarCropPreview();
+    });
+    ["pointerup", "pointercancel"].forEach(function (eventName) {
+      $("avatarCropStage").addEventListener(eventName, function (event) {
+        if (avatarCropDrag && event.pointerId === avatarCropDrag.pointerId) avatarCropDrag = null;
       });
-      $("staffEmailCode").addEventListener("input", function () {
-        this.classList.remove("is-invalid");
-        this.value = this.value.replace(/\D/g, "").slice(0, 6);
-      });
-    } else {
-      $("staffEmailSection").classList.add("d-none");
-    }
+    });
+    $("cancelAvatarCrop").addEventListener("click", closeAvatarCrop);
+    $("resetAvatarCrop").addEventListener("click", resetAvatarCrop);
+    $("saveAvatarCrop").addEventListener("click", saveAvatarCrop);
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && !$("avatarCropModal").hidden) closeAvatarCrop();
+    });
+    window.addEventListener("resize", updateAvatarCropPreview);
 
     if (signedIn.role !== "Admin") {
       ["business", "gcash", "data", "mailDelivery"].forEach(function (id) {
@@ -1084,7 +1399,7 @@
       renderMailSettings();
       $("mailSettingsForm").addEventListener("submit", saveMailSettings);
       $("testMailButton").addEventListener("click", sendMailTest);
-      $("mailTestRecipient").addEventListener("input", function () {
+      $("mailSenderEmail").addEventListener("input", function () {
         this.classList.remove("is-invalid");
       });
     }

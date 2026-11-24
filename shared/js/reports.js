@@ -376,7 +376,7 @@
           '<td class="text-end text-tabular text-app-muted">' + Store.number(product.minStock) + "</td>" +
           '<td class="text-end text-tabular fw-650">' + Store.number(suggested) + "</td>" +
           "<td>" + UI.statusBadge(state.label, state.badge) + "</td>" +
-          '<td class="text-end"><a class="btn btn-icon btn-icon--success" href="stock-in.php?product=' + encodeURIComponent(product.id) + '" title="Stock in" aria-label="Stock in"><i class="bi bi-plus-lg"></i></a></td>' +
+          '<td class="text-end"><a class="btn btn-icon btn-icon--success" href="inventory.php?panel=in&product=' + encodeURIComponent(product.id) + '" title="Stock in" aria-label="Stock in"><i class="bi bi-plus-lg"></i></a></td>' +
           "</tr>"
         );
       })

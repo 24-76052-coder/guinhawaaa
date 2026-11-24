@@ -6,25 +6,29 @@ namespace Guinhawa;
 
 /**
  * Account lifecycle rules shared by the HTML User Management page and the
- * existing JSON API. Only the administrator can create, update, reset or
- * deactivate staff/cashier accounts.
+ * existing JSON API. Admin and staff now live in the unified `users` table;
+ * only the administrator can create, update, reset or archive staff accounts.
  */
 final class AccountService
 {
     public static function adminExists(): bool
     {
-        return (bool) Database::fetchOne('SELECT id FROM admin WHERE id = 1 LIMIT 1');
+        return (bool) Database::fetchOne(
+            'SELECT id FROM ' . Schema::t('users') . " WHERE role = 'admin' AND id = 1 LIMIT 1",
+        );
     }
 
     public static function admin(): ?array
     {
-        return Database::fetchOne('SELECT * FROM admin WHERE id = 1 LIMIT 1');
+        return Database::fetchOne(
+            'SELECT * FROM ' . Schema::t('users') . " WHERE role = 'admin' AND id = 1 LIMIT 1",
+        );
     }
 
     /**
      * Create the one-and-only administrator. MySQL GET_LOCK serialises two
-     * simultaneous setup requests; the admin table's fixed primary key and
-     * CHECK constraint are the final database-level guard.
+     * simultaneous setup requests; the fixed primary key and unique indexes are
+     * the final database-level guards.
      *
      * @return array{recoveryCode: string, admin: array}
      */
@@ -62,13 +66,14 @@ final class AccountService
                 }
 
                 Database::execute(
-                    'INSERT INTO admin
-                        (id, username, full_name, email, password_hash, must_change_password, password_changed_at)
-                     VALUES (1, ?, ?, ?, ?, 0, NOW())',
+                    'INSERT INTO ' . Schema::t('users') . '
+                        (id, role, status, username, employee_code, full_name, email,
+                         password_hash, must_change_password, password_changed_at)
+                     VALUES (1, "admin", "active", ?, "ADMIN-01", ?, ?, ?, 0, NOW())',
                     [$username, $fullName, $email, password_hash($password, PASSWORD_DEFAULT)],
                 );
 
-                $recoveryCode = self::insertRecoveryCode($ip);
+                $recoveryCode = self::insertRecoveryCode($ip, $email);
 
                 Auth::audit(
                     ['type' => 'admin', 'id' => 1, 'name' => $fullName],
@@ -79,7 +84,7 @@ final class AccountService
 
                 return [
                     'recoveryCode' => $recoveryCode,
-                    'admin' => Users::mapAdmin(Database::fetchOne('SELECT * FROM admin WHERE id = 1 LIMIT 1') ?? []),
+                    'admin' => Users::mapAdmin(self::admin() ?? []),
                 ];
             });
         } finally {
@@ -95,11 +100,13 @@ final class AccountService
             throw new HttpException('The Admin account no longer exists.', 404, 'NOT_FOUND');
         }
 
-        return Database::transaction(static function () use ($actor, $ip): string {
+        return Database::transaction(static function () use ($actor, $ip, $admin): string {
             Database::execute(
-                'UPDATE admin_recovery_codes SET used_at = NOW() WHERE admin_id = 1 AND used_at IS NULL',
+                'UPDATE ' . Schema::t('password_reset_tokens') . '
+                 SET consumed_at = NOW()
+                 WHERE user_id = 1 AND channel = "recovery_code" AND consumed_at IS NULL',
             );
-            $code = self::insertRecoveryCode($ip);
+            $code = self::insertRecoveryCode($ip, (string) ($admin['email'] ?? ''));
             Auth::audit(
                 $actor,
                 'Backup Recovery Code Generated',
@@ -121,15 +128,12 @@ final class AccountService
         $search = trim($search);
         if ($search !== '') {
             $term = '%' . str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $search) . '%';
-            $where[] = '(full_name LIKE ? OR employee_id LIKE ? OR username LIKE ? OR email LIKE ?)';
+            $where[] = '(full_name LIKE ? OR employee_code LIKE ? OR username LIKE ? OR email LIKE ?)';
             array_push($params, $term, $term, $term, $term);
         }
 
         $rows = Database::fetchAll(
-            'SELECT id, employee_id, username, full_name, email, contact_number, role,
-                    date_joined, status, must_change_password, temp_password_expires_at, last_login_at, created_at,
-                    deleted_at, deleted_by
-             FROM employees
+            'SELECT * FROM ' . Schema::t('users') . '
              WHERE ' . implode(' AND ', $where) . "
              ORDER BY status = 'active' DESC, status = 'pending' DESC, full_name ASC",
             $params,
@@ -139,16 +143,13 @@ final class AccountService
     }
 
     /**
-     * Staff records an Admin deleted. The rows are kept as a read-only backup
+     * Staff records an Admin archived. The rows are kept as a read-only backup
      * so sales, attendance, audit history and personal details stay intact.
      */
     public static function archivedEmployees(): array
     {
         $rows = Database::fetchAll(
-            "SELECT id, employee_id, username, full_name, email, contact_number, role,
-                    date_joined, status, must_change_password, temp_password_expires_at, last_login_at,
-                    created_at, deleted_at, deleted_by
-             FROM employees
+            "SELECT * FROM " . Schema::t('users') . "
              WHERE deleted_at IS NOT NULL
                AND role IN ('inventory-staff', 'cashier', 'counter-staff', 'staff')
              ORDER BY deleted_at DESC, id DESC",
@@ -159,13 +160,16 @@ final class AccountService
 
     public static function findEmployee(int $id): array
     {
-        $row = Database::fetchOne('SELECT * FROM employees WHERE id = ? LIMIT 1', [$id]);
+        $row = Database::fetchOne(
+            'SELECT * FROM ' . Schema::t('users') . ' WHERE id = ? LIMIT 1',
+            [$id],
+        );
         if (!$row) {
             throw new HttpException('That account no longer exists.', 404, 'NOT_FOUND');
         }
         if (!empty($row['deleted_at'])) {
             throw new HttpException(
-                'That staff account was deleted. Restore it from Archived staff first.',
+                'That staff account was archived. Restore it from Archived staff first.',
                 409,
                 'ARCHIVED',
             );
@@ -177,53 +181,59 @@ final class AccountService
     }
 
     /**
-     * Create an active staff account. The password is hashed before storage;
-     * an optional Gmail address remains unverified until the staff member
-     * completes the verification flow in their profile.
+     * Create an active staff account with an Admin-supplied default password.
+     * The account must replace it on first sign-in.
      *
      * @return array{account: array}
      */
     public static function createEmployee(array $input, array $actor): array
     {
         $fullName = Validator::text($input['fullName'] ?? '', 'Full name', 1, 160);
-        $username = Validator::username($input['username'] ?? '');
-        $email = Validator::gmail($input['email'] ?? '', false);
-        $password = Validator::password($input['password'] ?? '', 'Password');
+        $email = Validator::email($input['email'] ?? '', true);
         $contact = Validator::contact($input['contactNumber'] ?? ($input['phone'] ?? ''));
         $role = Validator::staffRole($input['role'] ?? '');
+        $password = Validator::password($input['password'] ?? '', 'Default password');
         $status = Validator::status($input['status'] ?? 'active');
-        $dateJoined = date('Y-m-d');
+        if ($status === 'pending') {
+            $status = 'active';
+        }
 
+        $requestedUsername = trim((string) ($input['username'] ?? ''));
+        $username = $requestedUsername !== ''
+            ? Validator::username($requestedUsername)
+            : self::uniqueUsername($email);
+
+        $passwordHash = password_hash($password, PASSWORD_DEFAULT);
         self::assertIdentityAvailable($username, $email);
 
         $employeeId = Database::transaction(static function () use (
             $fullName,
             $username,
             $email,
-            $password,
+            $passwordHash,
             $contact,
             $role,
             $status,
-            $dateJoined,
             $actor,
         ): string {
-            $employeeId = self::nextEmployeeId($role);
+            $employeeId = self::nextStaffId();
 
             Database::execute(
-                'INSERT INTO employees
-                    (employee_id, username, full_name, email, contact_number, role,
-                     date_joined, status, password_hash, must_change_password, created_by)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)',
+                'INSERT INTO ' . Schema::t('users') . '
+                    (role, employee_code, staff_code, username, full_name, email, email_verified,
+                     email_verified_at, contact_number, status, password_hash, must_change_password,
+                     date_joined, created_by, session_version)
+                 VALUES (?, ?, ?, ?, ?, ?, 1, NOW(), ?, ?, ?, 1, CURDATE(), ?, 1)',
                 [
+                    $role,
+                    $employeeId,
                     $employeeId,
                     $username,
                     $fullName,
                     $email,
                     $contact,
-                    $role,
-                    $dateJoined,
                     $status,
-                    password_hash($password, PASSWORD_DEFAULT),
+                    $passwordHash,
                     (string) ($actor['code'] ?? 'ADMIN-01'),
                 ],
             );
@@ -231,44 +241,46 @@ final class AccountService
             return $employeeId;
         });
 
-        $created = Database::fetchOne('SELECT * FROM employees WHERE employee_id = ? LIMIT 1', [$employeeId]);
+        $created = Database::fetchOne(
+            'SELECT * FROM ' . Schema::t('users') . ' WHERE employee_code = ? LIMIT 1',
+            [$employeeId],
+        );
         $mapped = Users::mapEmployee($created);
 
         Auth::audit(
             $actor,
             'Employee Account Created',
-            "{$fullName} ({$employeeId}) created as {$mapped['roleLabel']} and set to {$mapped['status']} with direct username and password sign-in.",
+            "{$fullName} ({$employeeId}) created as {$mapped['roleLabel']} with an Admin-assigned default password. "
+                . 'The staff member must change it on first sign-in.',
             $employeeId,
         );
 
-        return [
-            'account' => $mapped,
-        ];
+        return ['account' => $mapped];
     }
 
     public static function updateEmployee(int $id, array $input, array $actor): array
     {
         $current = self::findEmployee($id);
         $fullName = Validator::text($input['fullName'] ?? '', 'Full name', 1, 160);
-        $username = Validator::username($input['username'] ?? '');
-        $email = Validator::gmail($input['email'] ?? ($current['email'] ?? ''), false);
+        $username = Validator::username($input['username'] ?? ($current['username'] ?? ''));
+        $email = Validator::email($input['email'] ?? ($current['email'] ?? ''), true);
         $role = Validator::staffRole($input['role'] ?? '');
         $contact = Validator::contact($input['contactNumber'] ?? ($input['phone'] ?? ($current['contact_number'] ?? '')));
         $status = Validator::status($input['status'] ?? ($current['status'] ?? 'active'));
 
+        $emailChanged = strcasecmp((string) ($current['email'] ?? ''), (string) $email) !== 0;
         self::assertIdentityAvailable($username, $email, $id);
 
         Database::execute(
-            'UPDATE employees
-             SET full_name = ?, username = ?, email = ?, email_verified = ?, contact_number = ?, role = ?, status = ?
+            'UPDATE ' . Schema::t('users') . '
+             SET full_name = ?, username = ?, email = ?, email_verified = 1,
+                 email_verified_at = ?, contact_number = ?, role = ?, status = ?
              WHERE id = ?',
             [
                 $fullName,
                 $username,
                 $email,
-                strcasecmp((string) ($current['email'] ?? ''), (string) ($email ?? '')) === 0
-                    ? (int) ($current['email_verified'] ?? 0)
-                    : 0,
+                $emailChanged ? date('Y-m-d H:i:s') : ($current['email_verified_at'] ?? date('Y-m-d H:i:s')),
                 $contact,
                 $role,
                 $status,
@@ -276,23 +288,26 @@ final class AccountService
             ],
         );
 
-        if (strcasecmp((string) ($current['email'] ?? ''), (string) ($email ?? '')) !== 0) {
-            Database::execute('DELETE FROM staff_email_verifications WHERE employee_id = ?', [$id]);
+        if ($emailChanged) {
             Database::execute(
-                "UPDATE password_reset_requests SET consumed_at = NOW()
-                 WHERE user_type = 'employee' AND user_id = ? AND channel = 'email'
-                   AND consumed_at IS NULL AND reset_completed_at IS NULL",
+                'DELETE FROM ' . Schema::t('email_verification_tokens') . '
+                 WHERE user_id = ? AND token_type = "email_change"',
                 [$id],
             );
             Database::execute(
-                'UPDATE account_activation_tokens SET used_at = NOW() WHERE employee_id = ? AND used_at IS NULL',
+                'UPDATE ' . Schema::t('password_reset_tokens') . '
+                 SET consumed_at = NOW()
+                 WHERE user_id = ? AND channel = "email"
+                   AND consumed_at IS NULL AND reset_completed_at IS NULL',
                 [$id],
             );
         }
 
         if ($status !== 'pending') {
             Database::execute(
-                'UPDATE account_activation_tokens SET used_at = NOW() WHERE employee_id = ? AND used_at IS NULL',
+                'UPDATE ' . Schema::t('email_verification_tokens') . '
+                 SET used_at = NOW()
+                 WHERE user_id = ? AND token_type = "activation" AND used_at IS NULL',
                 [$id],
             );
         }
@@ -301,13 +316,13 @@ final class AccountService
             Auth::invalidateSessions('employee', $id);
         }
 
-        $updated = Database::fetchOne('SELECT * FROM employees WHERE id = ? LIMIT 1', [$id]);
+        $updated = Database::fetchOne('SELECT * FROM ' . Schema::t('users') . ' WHERE id = ? LIMIT 1', [$id]);
         $mapped = Users::mapEmployee($updated);
         Auth::audit(
             $actor,
             'Employee Account Updated',
-            "{$fullName} ({$updated['employee_id']}) updated - {$mapped['roleLabel']}, {$status}.",
-            (string) $updated['employee_id'],
+            "{$fullName} ({$mapped['employeeId']}) updated - {$mapped['roleLabel']}, {$status}.",
+            (string) $mapped['employeeId'],
         );
 
         return $mapped;
@@ -322,26 +337,31 @@ final class AccountService
             return Users::mapEmployee($current);
         }
 
-        Database::execute('UPDATE employees SET status = ? WHERE id = ?', [$status, $id]);
+        Database::execute(
+            'UPDATE ' . Schema::t('users') . ' SET status = ? WHERE id = ?',
+            [$status, $id],
+        );
 
         if ($status !== 'active') {
             Auth::invalidateSessions('employee', $id);
         }
 
-        $updated = Database::fetchOne('SELECT * FROM employees WHERE id = ? LIMIT 1', [$id]);
+        $updated = Database::fetchOne('SELECT * FROM ' . Schema::t('users') . ' WHERE id = ? LIMIT 1', [$id]);
         Auth::audit(
             $actor,
             $status === 'active'
                 ? 'Employee Account Reactivated'
                 : ($status === 'pending' ? 'Employee Account Set Pending' : 'Employee Account Deactivated'),
-            "{$updated['full_name']} ({$updated['employee_id']}) was " .
+            "{$updated['full_name']} ({$updated['employee_code']}) was " .
                 ($status === 'active' ? 'reactivated' : ($status === 'pending' ? 'set to Pending' : 'deactivated')) . '.',
-            (string) $updated['employee_id'],
+            (string) $updated['employee_code'],
         );
 
         if ($status !== 'pending') {
             Database::execute(
-                'UPDATE account_activation_tokens SET used_at = NOW() WHERE employee_id = ? AND used_at IS NULL',
+                'UPDATE ' . Schema::t('email_verification_tokens') . '
+                 SET used_at = NOW()
+                 WHERE user_id = ? AND token_type = "activation" AND used_at IS NULL',
                 [$id],
             );
         }
@@ -350,11 +370,8 @@ final class AccountService
     }
 
     /**
-     * Delete a staff account without losing its information.
-     *
-     * The employee row is kept as an archived backup (personal details, role,
-     * shift, joined date, last activity, audit history) and access is revoked
-     * immediately. Sales and attendance keep referencing the same record.
+     * Archive a staff account without losing its information. All linked sales,
+     * attendance and audit history keep pointing at the same user id.
      */
     public static function archiveEmployee(int $id, array $actor): array
     {
@@ -362,15 +379,16 @@ final class AccountService
 
         Database::transaction(static function () use ($id, $actor): void {
             Database::execute(
-                'UPDATE employees
-                 SET deleted_at = NOW(), deleted_by = ?, status = ?
+                'UPDATE ' . Schema::t('users') . '
+                 SET deleted_at = NOW(), deleted_by = ?, status = "inactive"
                  WHERE id = ?',
-                [self::actorLabel($actor), 'inactive', $id],
+                [self::actorLabel($actor), $id],
             );
 
             Database::execute(
-                'UPDATE account_activation_tokens SET used_at = NOW()
-                 WHERE employee_id = ? AND used_at IS NULL',
+                'UPDATE ' . Schema::t('email_verification_tokens') . '
+                 SET used_at = NOW()
+                 WHERE user_id = ? AND token_type = "activation" AND used_at IS NULL',
                 [$id],
             );
         });
@@ -380,20 +398,20 @@ final class AccountService
         Auth::audit(
             $actor,
             'Employee Account Deleted',
-            "{$current['full_name']} ({$current['employee_id']}) was moved to Archived staff. "
+            "{$current['full_name']} ({$current['employee_code']}) was moved to Archived staff. "
                 . 'All details and linked records were kept as a backup.',
-            (string) $current['employee_id'],
+            (string) $current['employee_code'],
         );
 
-        $archived = Database::fetchOne('SELECT * FROM employees WHERE id = ? LIMIT 1', [$id]);
+        $archived = Database::fetchOne('SELECT * FROM ' . Schema::t('users') . ' WHERE id = ? LIMIT 1', [$id]);
         return Users::mapEmployee($archived ?? $current);
     }
 
-    /** Bring a deleted staff record back into the team directory. */
+    /** Bring an archived staff record back into the team directory. */
     public static function restoreEmployee(int $id, array $actor): array
     {
         $row = Database::fetchOne(
-            'SELECT * FROM employees WHERE id = ? AND deleted_at IS NOT NULL LIMIT 1',
+            'SELECT * FROM ' . Schema::t('users') . ' WHERE id = ? AND deleted_at IS NOT NULL LIMIT 1',
             [$id],
         );
         if (!$row) {
@@ -404,48 +422,40 @@ final class AccountService
         }
 
         Database::execute(
-            'UPDATE employees SET deleted_at = NULL, deleted_by = NULL WHERE id = ?',
+            'UPDATE ' . Schema::t('users') . ' SET deleted_at = NULL, deleted_by = NULL WHERE id = ?',
             [$id],
         );
 
         Auth::audit(
             $actor,
             'Employee Account Restored',
-            "{$row['full_name']} ({$row['employee_id']}) was restored from Archived staff and stays inactive until an Admin activates it.",
-            (string) $row['employee_id'],
+            "{$row['full_name']} ({$row['employee_code']}) was restored from Archived staff and stays inactive until an Admin activates it.",
+            (string) $row['employee_code'],
         );
 
-        $restored = Database::fetchOne('SELECT * FROM employees WHERE id = ? LIMIT 1', [$id]);
+        $restored = Database::fetchOne('SELECT * FROM ' . Schema::t('users') . ' WHERE id = ? LIMIT 1', [$id]);
         return Users::mapEmployee($restored ?? $row);
     }
 
-    private static function actorLabel(array $actor): string
-    {
-        $label = trim((string) ($actor['name'] ?? $actor['fullName'] ?? ''));
-        if ($label === '') {
-            $label = 'Administrator';
-        }
-        return mb_substr($label, 0, 160);
-    }
-
     /**
-     * Generate a one-time temporary password, expire it after 24 hours and
-     * invalidate every existing session for that account.
+     * Assign a new temporary/default password and invalidate every existing
+     * session for that account.
      *
-     * @return array{password: string, account: array, expiresAt: string}
+     * @return array{password: string, account: array, expiresAt: null}
      */
-    public static function resetEmployeePassword(int $id, array $actor): array
+    public static function resetEmployeePassword(int $id, array $actor, string $password = ''): array
     {
         $current = self::findEmployee($id);
-        $temporary = Validator::temporaryPassword();
-        $expiresAt = date('Y-m-d H:i:s', time() + 24 * 60 * 60);
+        $temporary = trim($password) !== ''
+            ? Validator::password($password, 'Temporary password')
+            : Validator::temporaryPassword();
 
         Database::execute(
-            'UPDATE employees
-             SET password_hash = ?, must_change_password = 1, temp_password_expires_at = ?,
-                 password_changed_at = NULL, failed_login_count = 0, locked_until = NULL
+            'UPDATE ' . Schema::t('users') . '
+             SET password_hash = ?, must_change_password = 1, temp_password_expires_at = NULL,
+                 password_changed_at = NOW(), failed_login_count = 0, locked_until = NULL
              WHERE id = ?',
-            [password_hash($temporary, PASSWORD_DEFAULT), $expiresAt, $id],
+            [password_hash($temporary, PASSWORD_DEFAULT), $id],
         );
 
         Auth::invalidateSessions('employee', $id);
@@ -453,15 +463,16 @@ final class AccountService
         Auth::audit(
             $actor,
             'Employee Password Reset',
-            "{$current['full_name']} ({$current['employee_id']}) received a temporary password valid for 24 hours.",
-            (string) $current['employee_id'],
+            "{$current['full_name']} ({$current['employee_code']}) received a new temporary password. "
+                . 'The staff member must change it on the next sign-in.',
+            (string) $current['employee_code'],
         );
 
-        $fresh = Database::fetchOne('SELECT * FROM employees WHERE id = ? LIMIT 1', [$id]);
+        $fresh = Database::fetchOne('SELECT * FROM ' . Schema::t('users') . ' WHERE id = ? LIMIT 1', [$id]);
         return [
             'password' => $temporary,
             'account' => Users::mapEmployee($fresh),
-            'expiresAt' => $expiresAt,
+            'expiresAt' => null,
         ];
     }
 
@@ -480,9 +491,8 @@ final class AccountService
             throw new HttpException('The new password confirmation does not match.', 422, 'VALIDATION');
         }
 
-        $table = $user['type'] === 'admin' ? 'admin' : 'employees';
         $id = (int) $user['id'];
-        $row = Database::fetchOne("SELECT * FROM {$table} WHERE id = ? LIMIT 1", [$id]);
+        $row = Database::fetchOne('SELECT * FROM ' . Schema::t('users') . ' WHERE id = ? LIMIT 1', [$id]);
         if (!$row || !password_verify($currentPassword, (string) $row['password_hash'])) {
             throw new HttpException('Your current password is incorrect.', 400, 'BAD_PASSWORD');
         }
@@ -491,15 +501,15 @@ final class AccountService
         }
 
         Database::execute(
-            "UPDATE {$table}
+            'UPDATE ' . Schema::t('users') . '
              SET password_hash = ?, must_change_password = 0, temp_password_expires_at = NULL,
                  password_changed_at = NOW(), failed_login_count = 0, locked_until = NULL
-             WHERE id = ?",
+             WHERE id = ?',
             [password_hash($newPassword, PASSWORD_DEFAULT), $id],
         );
 
         // Revoke other devices but keep this session signed in.
-        Auth::invalidateSessions($user['type'], $id, true);
+        Auth::invalidateSessions(Users::sessionType($row), $id, true);
 
         Auth::audit(
             $user,
@@ -508,79 +518,114 @@ final class AccountService
             (string) ($user['employeeId'] ?? 'ADMIN-01'),
         );
 
-        $fresh = Database::fetchOne("SELECT * FROM {$table} WHERE id = ? LIMIT 1", [$id]);
-        return $user['type'] === 'admin' ? Users::mapAdmin($fresh) : Users::mapEmployee($fresh);
+        $fresh = Database::fetchOne('SELECT * FROM ' . Schema::t('users') . ' WHERE id = ? LIMIT 1', [$id]);
+        return Users::mapUser($fresh);
     }
 
     public static function assertIdentityAvailable(string $username, ?string $email, ?int $exceptEmployeeId = null): void
     {
-        $sql = 'SELECT id, username, email FROM admin WHERE username = ?';
+        $conditions = ['username = ?'];
         $params = [$username];
         if ($email !== null) {
-            $sql .= ' OR email = ?';
-            $params[] = $email;
-        }
-        $admin = Database::fetchOne($sql . ' LIMIT 1', $params);
-        if ($admin) {
-            if (strcasecmp((string) $admin['username'], $username) === 0) {
-                throw new HttpException('That username is already in use.', 409, 'CONFLICT');
-            }
-            throw new HttpException('That email address is already in use.', 409, 'CONFLICT');
-        }
-
-        $params = [$username];
-        $sql = 'SELECT id, username, email, deleted_at FROM employees WHERE username = ?';
-        if ($email !== null) {
-            $sql = 'SELECT id, username, email, deleted_at FROM employees WHERE (username = ? OR email = ?)';
+            $conditions[] = 'email = ?';
             $params[] = $email;
         }
         if ($exceptEmployeeId !== null) {
-            $sql .= ' AND id <> ?';
+            $conditions[] = 'id <> ?';
             $params[] = $exceptEmployeeId;
         }
-        $sql .= ' LIMIT 1';
 
-        $employee = Database::fetchOne($sql, $params);
-        if ($employee) {
-            $archived = !empty($employee['deleted_at']);
-            if (strcasecmp((string) $employee['username'], $username) === 0) {
-                throw new HttpException(
-                    $archived
-                        ? 'That username belongs to an archived staff record. Restore it from Archived staff instead.'
-                        : 'That username is already in use.',
-                    409,
-                    $archived ? 'ARCHIVED' : 'CONFLICT',
-                );
-            }
+        $sql = 'SELECT id, username, email, role, deleted_at FROM ' . Schema::t('users')
+            . ' WHERE (' . implode(' OR ', array_slice($conditions, 0, $email !== null ? 2 : 1)) . ')';
+        if ($exceptEmployeeId !== null) {
+            $sql .= ' AND id <> ?';
+        }
+
+        $account = Database::fetchOne($sql . ' LIMIT 1', $params);
+        if (!$account) {
+            return;
+        }
+
+        $archived = !empty($account['deleted_at']);
+        if (strcasecmp((string) $account['username'], $username) === 0) {
             throw new HttpException(
                 $archived
-                    ? 'That email address belongs to an archived staff record. Restore it from Archived staff instead.'
-                    : 'That email address is already in use.',
+                    ? 'That username belongs to an archived staff record. Restore it from Archived staff instead.'
+                    : 'That username is already in use.',
                 409,
                 $archived ? 'ARCHIVED' : 'CONFLICT',
             );
         }
+
+        throw new HttpException(
+            $archived
+                ? 'That email address belongs to an archived staff record. Restore it from Archived staff instead.'
+                : 'That email address is already in use.',
+            409,
+            $archived ? 'ARCHIVED' : 'CONFLICT',
+        );
     }
 
-    private static function nextEmployeeId(string $role): string
+    /**
+     * Generate the next Staff ID. STF-001, STF-002, ... is shared by every
+     * role so the Admin has one unambiguous identifier for each person.
+     */
+    private static function nextStaffId(): string
     {
-        $prefix = $role === 'inventory-staff' ? 'INV' : 'CST';
         $rows = Database::fetchAll(
-            'SELECT employee_id FROM employees WHERE employee_id LIKE ?',
-            [$prefix . '-%'],
+            'SELECT employee_code, staff_code FROM ' . Schema::t('users') . "
+             WHERE employee_code LIKE 'STF-%' OR staff_code LIKE 'STF-%'",
         );
 
         $highest = 0;
         foreach ($rows as $row) {
-            if (preg_match('/^' . preg_quote($prefix, '/') . '-(\d+)$/', (string) $row['employee_id'], $match)) {
-                $highest = max($highest, (int) $match[1]);
+            foreach (['staff_code', 'employee_code'] as $column) {
+                if (preg_match('/^STF-(\d+)$/i', (string) ($row[$column] ?? ''), $match)) {
+                    $highest = max($highest, (int) $match[1]);
+                }
             }
         }
 
-        return $prefix . '-' . str_pad((string) ($highest + 1), 3, '0', STR_PAD_LEFT);
+        return 'STF-' . str_pad((string) ($highest + 1), 3, '0', STR_PAD_LEFT);
     }
 
-    private static function insertRecoveryCode(string $ip): string
+    /** Derive a unique username from the registered email address. */
+    private static function uniqueUsername(string $email): string
+    {
+        $local = strstr($email, '@', true);
+        $base = strtolower((string) ($local === false ? 'staff' : $local));
+        $base = preg_replace('/[^a-z0-9._-]+/', '.', $base) ?? 'staff';
+        $base = trim($base, '.-_');
+        if (strlen($base) < 3) {
+            $base = 'staff';
+        }
+        $base = substr($base, 0, 50);
+
+        $candidate = $base;
+        $suffix = 1;
+        while (self::identityExists($candidate)) {
+            $suffix += 1;
+            $candidate = substr($base, 0, 50) . $suffix;
+        }
+
+        return $candidate;
+    }
+
+    private static function identityExists(string $username): bool
+    {
+        return (bool) Database::fetchOne(
+            'SELECT id FROM ' . Schema::t('users') . ' WHERE username = ? LIMIT 1',
+            [$username],
+        );
+    }
+
+    private static function actorLabel(array $actor): string
+    {
+        $label = trim((string) ($actor['name'] ?? $actor['fullName'] ?? ''));
+        return $label !== '' ? mb_substr($label, 0, 160) : 'Administrator';
+    }
+
+    private static function insertRecoveryCode(string $ip, string $email): string
     {
         $alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
         $groups = [];
@@ -594,8 +639,10 @@ final class AccountService
         $code = 'GQ-' . implode('-', $groups);
 
         Database::execute(
-            'INSERT INTO admin_recovery_codes (admin_id, code_hash, created_ip) VALUES (1, ?, ?)',
-            [hash('sha256', $code), substr($ip, 0, 45)],
+            'INSERT INTO ' . Schema::t('password_reset_tokens') . '
+                (user_id, email, channel, reset_token_hash, expires_at, requested_ip)
+             VALUES (1, ?, "recovery_code", ?, DATE_ADD(NOW(), INTERVAL 10 YEAR), ?)',
+            [$email, hash('sha256', $code), substr($ip, 0, 45)],
         );
 
         return $code;

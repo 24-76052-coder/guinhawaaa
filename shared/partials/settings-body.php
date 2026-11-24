@@ -28,7 +28,7 @@ declare(strict_types=1);
         <!-- Signed-in profile -->
           <section class="settings-card mb-4" id="profile">
             <header class="settings-card__head">
-              <span class="settings-card__icon" aria-hidden="true"><i class="bi bi-person-circle"></i></span>
+              <button class="profile-avatar-button" id="profileAvatarPreview" type="button" aria-label="Change profile avatar" title="Change profile avatar" style="display:grid;place-items:center;width:48px;height:48px;min-width:48px;max-width:48px;flex:0 0 48px;overflow:hidden;padding:0;border-radius:50%"></button>
               <div class="settings-card__headtext">
                 <h2 class="settings-card__title">My profile</h2>
                 <p class="settings-card__sub">Details for the account signed in to this browser session.</p>
@@ -38,24 +38,53 @@ declare(strict_types=1);
 
             <div class="detail-grid mb-3">
               <div class="detail-item"><span class="detail-item__label">Username</span><span class="detail-item__value" id="profileUsername" style="font-family:Consolas,monospace">&mdash;</span></div>
-              <div class="detail-item"><span class="detail-item__label">Work email</span><span class="detail-item__value" id="profileEmailDisplay">&mdash;</span></div>
+              <div class="detail-item"><span class="detail-item__label">Personal email</span><span class="detail-item__value" id="profileEmailDisplay">&mdash;</span></div>
               <div class="detail-item"><span class="detail-item__label">Employee ID</span><span class="detail-item__value" id="profileEmployeeId">&mdash;</span></div>
               <div class="detail-item"><span class="detail-item__label">Role</span><span class="detail-item__value" id="profileRole">&mdash;</span></div>
               <div class="detail-item"><span class="detail-item__label">Account status</span><span class="detail-item__value" id="profileStatus">&mdash;</span></div>
             </div>
 
             <form id="profileForm" novalidate>
+              <input class="d-none" id="profilePhotoInput" type="file" accept="image/png,image/jpeg,image/webp">
+              <div class="avatar-crop-modal" id="avatarCropModal" role="dialog" aria-modal="true" aria-labelledby="avatarCropTitle" hidden>
+                <div class="avatar-crop-dialog">
+                  <h2 id="avatarCropTitle">Crop Your Image</h2>
+                  <div class="avatar-crop-content">
+                    <div>
+                      <div class="avatar-crop-stage" id="avatarCropStage">
+                        <img id="avatarCropImage" alt="Image crop workspace" draggable="false">
+                        <div class="avatar-crop-frame" id="avatarCropFrame">
+                          <button class="avatar-crop-handle" type="button" data-handle="nw" aria-label="Resize crop from top left"></button>
+                          <button class="avatar-crop-handle" type="button" data-handle="ne" aria-label="Resize crop from top right"></button>
+                          <button class="avatar-crop-handle" type="button" data-handle="sw" aria-label="Resize crop from bottom left"></button>
+                          <button class="avatar-crop-handle" type="button" data-handle="se" aria-label="Resize crop from bottom right"></button>
+                        </div>
+                      </div>
+                      <div class="avatar-crop-zoom">
+                        <label for="avatarCropZoom">Zoom</label>
+                        <input id="avatarCropZoom" type="range" min="1" max="4" step="0.01" value="1">
+                      </div>
+                      <p class="avatar-crop-hint">Drag the image to position it. Drag a corner to resize the square crop.</p>
+                    </div>
+                    <aside class="avatar-crop-preview-wrap">
+                      <span>Preview</span>
+                      <canvas id="avatarCropPreview" width="96" height="96" aria-label="Live cropped profile picture preview"></canvas>
+                    </aside>
+                  </div>
+                  <div class="avatar-crop-actions">
+                    <button class="avatar-crop-reset" id="resetAvatarCrop" type="button">Reset</button>
+                    <div>
+                      <button class="avatar-crop-cancel" id="cancelAvatarCrop" type="button">Cancel</button>
+                      <button class="avatar-crop-save" id="saveAvatarCrop" type="button">Save Changes</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
               <div class="row g-3">
                 <div class="col-md-6">
                   <label class="form-label" for="profileName">Full name</label>
                   <input class="form-control" id="profileName" type="text" required>
                   <div class="invalid-feedback">Enter your full name.</div>
-                </div>
-                <div class="col-md-6" id="adminProfileEmailField">
-                  <label class="form-label" for="profileEmail">Work email (Gmail)</label>
-                  <input class="form-control" id="profileEmail" type="email" placeholder="name@gmail.com" autocomplete="email" required>
-                  <div class="invalid-feedback">Enter a valid email address.</div>
-                  <div class="form-text">Used for account notices and password recovery. Email delivery uses the separate Gmail SMTP settings.</div>
                 </div>
                 <div class="col-md-6">
                   <label class="form-label" for="profilePhone">Phone</label>
@@ -73,45 +102,46 @@ declare(strict_types=1);
             </form>
           </section>
 
-          <section class="settings-card mb-4 d-none" id="staffEmailSection">
+          <section class="settings-card mb-4 d-none" id="accountEmailSection">
             <header class="settings-card__head">
               <span class="settings-card__icon" aria-hidden="true"><i class="bi bi-envelope-check"></i></span>
               <div class="settings-card__headtext">
-                <h2 class="settings-card__title">Staff Gmail</h2>
-                <p class="settings-card__sub">Add or change your Gmail address. Verification is optional for signing in.</p>
+                <h2 class="settings-card__title">Personal email</h2>
+                <p class="settings-card__sub">Your personal email is used to sign in and recover your password. To change it, enter a new address and confirm it with a code.</p>
               </div>
-              <span class="settings-card__badge" id="staffEmailBadge">Not verified</span>
+              <span class="settings-card__badge" id="accountEmailBadge">Not verified</span>
             </header>
 
             <div class="detail-item mb-3">
-              <span class="detail-item__label">Current Gmail status</span>
-              <span class="detail-item__value" id="staffEmailCurrent">No Gmail added</span>
+              <span class="detail-item__label">Current email status</span>
+              <span class="detail-item__value" id="accountEmailCurrent">No email added</span>
             </div>
             <div class="row g-3 align-items-end">
               <div class="col-md-7">
-                <label class="form-label" for="staffEmailAddress">Gmail address</label>
-                <input class="form-control" id="staffEmailAddress" type="email" pattern="[^@\s]+@gmail\.com" placeholder="name@gmail.com" autocomplete="email" required>
-                <div class="invalid-feedback">Enter a valid Gmail address ending in @gmail.com.</div>
+                <label class="form-label" for="accountEmailAddress">Personal email address</label>
+                <input class="form-control" id="accountEmailAddress" type="email" placeholder="name@example.com" autocomplete="email" required>
+                <div class="invalid-feedback">Enter a valid email address.</div>
               </div>
               <div class="col-md-5">
-                <button class="btn btn-outline-app" type="button" id="requestStaffEmailCode">
+                <button class="btn btn-outline-app" type="button" id="requestAccountEmailCode">
                   <i class="bi bi-send" aria-hidden="true"></i> Send verification code
                 </button>
               </div>
-              <div class="col-md-7 d-none" id="staffEmailCodePanel">
-                <label class="form-label" for="staffEmailCode">6-digit verification code</label>
-                <input class="form-control" id="staffEmailCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="000000">
-                <div class="invalid-feedback">Enter the 6-digit code sent to your Gmail.</div>
+              <div class="col-md-7" id="accountEmailCodePanel">
+                <label class="form-label" for="accountEmailCode">6-digit verification code</label>
+                <input class="form-control" id="accountEmailCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="000000" required>
+                <div class="form-text" id="accountEmailCodeHelp">Enter your email above and send a code, then type the 6-digit code here.</div>
+                <div class="invalid-feedback">Enter the 6-digit code sent to your email.</div>
               </div>
-              <div class="col-md-5 d-none" id="staffEmailVerifyPanel">
-                <button class="btn btn-brand" type="button" id="verifyStaffEmailCode">
-                  <i class="bi bi-shield-check" aria-hidden="true"></i> Verify Gmail
+              <div class="col-md-5" id="accountEmailVerifyPanel">
+                <button class="btn btn-brand" type="button" id="verifyAccountEmailCode">
+                  <i class="bi bi-shield-check" aria-hidden="true"></i> Verify code
                 </button>
               </div>
             </div>
-            <div class="alert-app mt-3" role="status" aria-live="polite" id="staffEmailStatus">
+            <div class="alert-app mt-3" role="status" aria-live="polite" id="accountEmailStatus">
               <i class="bi bi-info-circle" aria-hidden="true"></i>
-              <div>Gmail is optional. A verified Gmail can be used for password recovery.</div>
+              <div>You can sign in without verifying your email. Verify it to use email password recovery.</div>
             </div>
           </section>
 
@@ -220,8 +250,8 @@ declare(strict_types=1);
             <header class="settings-card__head">
               <span class="settings-card__icon" aria-hidden="true"><i class="bi bi-envelope-check"></i></span>
               <div class="settings-card__headtext">
-                <h2 class="settings-card__title">Email delivery</h2>
-                <p class="settings-card__sub">Configure Gmail for staff account notices and password recovery emails.</p>
+                <h2 class="settings-card__title">Email for staff codes</h2>
+                <p class="settings-card__sub">Set this up once so staff receive verification and password reset codes at their personal email.</p>
               </div>
               <span class="settings-card__badge" id="mailDeliveryBadge">Admin only</span>
             </header>
@@ -229,23 +259,14 @@ declare(strict_types=1);
             <form id="mailSettingsForm" novalidate>
               <div class="row g-3">
                 <div class="col-md-6">
-                  <label class="form-label" for="mailSenderEmail">Gmail sender address <span class="req">*</span></label>
+                  <label class="form-label" for="mailSenderEmail">Sender Gmail address <span class="req">*</span></label>
                   <input class="form-control" id="mailSenderEmail" type="email" autocomplete="email" placeholder="name@gmail.com" required>
-                  <div class="invalid-feedback">Enter the Gmail address used to send Guinhawa emails.</div>
-                </div>
-                <div class="col-md-6">
-                  <label class="form-label" for="mailSenderName">Sender name</label>
-                  <input class="form-control" id="mailSenderName" type="text" maxlength="120" placeholder="Guinhawa Agri-Poultry Supply">
+                  <div class="invalid-feedback">Enter the Gmail account Guinhawa will send from.</div>
                 </div>
                 <div class="col-md-6">
                   <label class="form-label" for="mailAppPassword">Google App Password</label>
                   <input class="form-control" id="mailAppPassword" type="password" autocomplete="new-password" placeholder="Enter to set or replace the password">
-                  <div class="form-text" id="mailPasswordHelp">Use a Google App Password, not your regular Gmail password. It is stored on the server and never shown again.</div>
-                </div>
-                <div class="col-md-6">
-                  <label class="form-label" for="mailTestRecipient">Test email recipient</label>
-                  <input class="form-control" id="mailTestRecipient" type="email" autocomplete="email" placeholder="you@example.com">
-                  <div class="invalid-feedback">Enter a valid address for the test email.</div>
+                  <div class="form-text" id="mailPasswordHelp">Use a Google App Password, not your regular Gmail password. It is saved securely and never shown again.</div>
                 </div>
               </div>
               <div class="alert-app mt-3" role="status" aria-live="polite" id="mailSettingsStatus">
@@ -253,13 +274,13 @@ declare(strict_types=1);
                 <div>Loading email delivery status&hellip;</div>
               </div>
               <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mt-3">
-                <span class="text-app-muted" style="font-size:.8rem">Staff account notices go to the staff email entered when creating the account.</span>
+                <span class="text-app-muted" style="font-size:.8rem">Test messages go to the sender Gmail. Staff codes go to each staff member's personal email.</span>
                 <div class="d-flex flex-wrap gap-2">
-                  <button class="btn btn-outline-app" type="button" id="testMailButton">
-                    <i class="bi bi-send" aria-hidden="true"></i> Send test email
-                  </button>
                   <button class="btn btn-brand" type="submit" id="saveMailSettingsButton">
-                    <i class="bi bi-check2" aria-hidden="true"></i> Save email settings
+                    <i class="bi bi-check2" aria-hidden="true"></i> Save settings
+                  </button>
+                  <button class="btn btn-outline-app" type="button" id="testMailButton">
+                    <i class="bi bi-send" aria-hidden="true"></i> Send test to sender Gmail
                   </button>
                 </div>
               </div>

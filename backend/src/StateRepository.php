@@ -51,15 +51,14 @@ final class StateRepository
 
     private static function products(): array
     {
-        $rows = Database::fetchAll('SELECT * FROM products ORDER BY id ASC');
+        $rows = Database::fetchAll('SELECT * FROM ' . Schema::t('products') . ' ORDER BY id ASC');
         if (!$rows) {
             return ['active' => [], 'archived' => []];
         }
 
         $variantRows = Database::fetchAll(
-            'SELECT v.*, COALESCE(i.quantity, 0) AS stock
-             FROM product_variants v
-             LEFT JOIN inventory i ON i.product_id = v.product_id AND i.variant_key = v.variant_key
+            'SELECT v.*, v.quantity AS stock
+             FROM ' . Schema::t('product_variants') . ' v
              ORDER BY v.product_id ASC, v.variant_key ASC',
         );
 
@@ -130,7 +129,7 @@ final class StateRepository
 
     private static function customers(): array
     {
-        $rows = Database::fetchAll('SELECT * FROM customers ORDER BY id ASC');
+        $rows = Database::fetchAll('SELECT * FROM ' . Schema::t('customers') . ' ORDER BY id ASC');
         return array_map(static fn (array $row) => [
             'id' => $row['code'],
             'name' => $row['name'],
@@ -145,7 +144,7 @@ final class StateRepository
 
     private static function suppliers(): array
     {
-        $rows = Database::fetchAll('SELECT * FROM suppliers ORDER BY id ASC');
+        $rows = Database::fetchAll('SELECT * FROM ' . Schema::t('suppliers') . ' ORDER BY id ASC');
         return array_map(static fn (array $row) => [
             'id' => $row['code'],
             'name' => $row['name'],
@@ -157,12 +156,27 @@ final class StateRepository
 
     private static function sales(): array
     {
-        $rows = Database::fetchAll('SELECT * FROM sales ORDER BY id ASC');
+        $rows = Database::fetchAll(
+            'SELECT id, order_no AS receipt_no, customer, customer_id,
+                    COALESCE(legacy_order_type, "Walk-in") AS order_type,
+                    subtotal, discount, total, payment_method, amount_tendered, change_due,
+                    CASE WHEN status = "completed" THEN "Paid" ELSE status END AS status,
+                    cashier, staff_code AS staff_id, transaction_id,
+                    order_date AS sale_date, created_at
+             FROM ' . Schema::t('orders') . '
+             WHERE source = "sales"
+             ORDER BY id ASC',
+        );
         if (!$rows) {
             return [];
         }
 
-        $itemRows = Database::fetchAll('SELECT * FROM sale_items ORDER BY id ASC');
+        $itemRows = Database::fetchAll(
+            'SELECT id, order_id AS sale_id, product_id, variant_key, product_name,
+                    category, quantity, price, total, unit
+             FROM ' . Schema::t('order_items') . '
+             ORDER BY id ASC',
+        );
         $itemsBySale = [];
         foreach ($itemRows as $item) {
             $itemsBySale[(int) $item['sale_id']][] = [
@@ -201,19 +215,28 @@ final class StateRepository
 
     private static function orders(): array
     {
-        $rows = Database::fetchAll('SELECT * FROM orders ORDER BY id ASC');
+        $rows = Database::fetchAll(
+            'SELECT o.id, o.order_no, o.customer, o.customer_id,
+                    i.product_id, i.product_name AS product, i.variant_key,
+                    i.quantity, i.unit, i.price AS unit_price, i.total,
+                    o.status, o.message, o.order_date, o.created_at
+             FROM ' . Schema::t('orders') . ' o
+             LEFT JOIN ' . Schema::t('order_items') . ' i ON i.order_id = o.id
+             WHERE o.source = "orders"
+             ORDER BY o.id ASC',
+        );
         return array_map(static fn (array $row) => [
             'id' => (int) $row['id'],
             'order_no' => $row['order_no'] ?? '',
             'customer' => $row['customer'],
             'customer_id' => $row['customer_id'] ?? '',
             'product_id' => $row['product_id'] !== null ? (int) $row['product_id'] : null,
-            'product' => $row['product'],
-            'variant' => $row['variant_key'],
-            'quantity' => (float) $row['quantity'],
-            'unit' => $row['unit'],
-            'unit_price' => (float) $row['unit_price'],
-            'total' => (float) $row['total'],
+            'product' => $row['product'] ?? '',
+            'variant' => $row['variant_key'] ?? 'A',
+            'quantity' => (float) ($row['quantity'] ?? 0),
+            'unit' => $row['unit'] ?? 'Units',
+            'unit_price' => (float) ($row['unit_price'] ?? 0),
+            'total' => (float) ($row['total'] ?? 0),
             'status' => $row['status'],
             'message' => $row['message'] ?? '',
             'date' => self::dateLabel($row['order_date']),
@@ -223,13 +246,42 @@ final class StateRepository
 
     private static function heldOrders(): array
     {
-        $rows = Database::fetchAll('SELECT * FROM held_orders ORDER BY id DESC');
-        return array_map(static function (array $row): array {
-            $items = json_decode((string) $row['items_json'], true);
+        $rows = Database::fetchAll(
+            'SELECT id, order_no AS hold_no, discount, payment_method,
+                    COALESCE(legacy_order_type, "Walk-in") AS order_type,
+                    amount_tendered, cashier, created_at, hold_date
+             FROM ' . Schema::t('orders') . '
+             WHERE status = "held"
+             ORDER BY id DESC',
+        );
+        if (!$rows) {
+            return [];
+        }
+
+        $itemRows = Database::fetchAll(
+            'SELECT i.* FROM ' . Schema::t('order_items') . ' i
+             JOIN ' . Schema::t('orders') . ' o ON o.id = i.order_id
+             WHERE o.status = "held"
+             ORDER BY i.id ASC',
+        );
+        $itemsByOrder = [];
+        foreach ($itemRows as $item) {
+            $itemsByOrder[(int) $item['order_id']][] = [
+                'productId' => $item['product_id'] !== null ? (int) $item['product_id'] : null,
+                'variant' => $item['variant_key'],
+                'name' => $item['product_name'],
+                'category' => $item['category'],
+                'unit' => $item['unit'],
+                'qty' => (float) $item['quantity'],
+                'price' => (float) $item['price'],
+            ];
+        }
+
+        return array_map(static function (array $row) use ($itemsByOrder): array {
             return [
                 'id' => (int) $row['id'],
                 'hold_no' => $row['hold_no'],
-                'items' => is_array($items) ? $items : [],
+                'items' => $itemsByOrder[(int) $row['id']] ?? [],
                 'discount' => (float) $row['discount'],
                 'payment_method' => $row['payment_method'],
                 'order_type' => $row['order_type'] ?? 'Walk-in',
@@ -243,7 +295,19 @@ final class StateRepository
 
     private static function stockMoves(): array
     {
-        $rows = Database::fetchAll('SELECT * FROM inventory_history ORDER BY id DESC');
+        $rows = Database::fetchAll(
+            'SELECT id, movement_date, created_at, product_name, product_id, variant_key, unit,
+                    CASE transaction_type
+                        WHEN "stock_in" THEN "Stock In"
+                        WHEN "sale" THEN "Stock Out"
+                        WHEN "damaged" THEN "Damaged"
+                        WHEN "expired" THEN "Expired"
+                        ELSE "Stock Out"
+                    END AS action,
+                    quantity, previous_stock, new_stock AS next_stock, user_label, reference, remarks
+             FROM ' . Schema::t('inventory_transactions') . '
+             ORDER BY id DESC',
+        );
         return array_map(static fn (array $row) => [
             'id' => (int) $row['id'],
             'date' => self::dateLabel($row['movement_date']),
@@ -265,11 +329,11 @@ final class StateRepository
     private static function supplierDeliveries(): array
     {
         $rows = Database::fetchAll(
-            'SELECT s.*, sup.code AS supplier_code
-             FROM stock_in s
-             LEFT JOIN suppliers sup ON sup.id = s.supplier_id
-             WHERE s.is_delivery = 1
-             ORDER BY s.id DESC',
+            'SELECT t.*, sup.code AS supplier_code, t.movement_date AS received_date
+             FROM ' . Schema::t('inventory_transactions') . ' t
+             LEFT JOIN ' . Schema::t('suppliers') . ' sup ON sup.id = t.supplier_id
+             WHERE t.is_delivery = 1
+             ORDER BY t.id DESC',
         );
         return array_map(static fn (array $row) => [
             'id' => (int) $row['id'],
@@ -290,7 +354,12 @@ final class StateRepository
     private static function inventoryIssues(): array
     {
         $rows = Database::fetchAll(
-            "SELECT * FROM inventory_history WHERE action IN ('Damaged', 'Expired') ORDER BY id DESC",
+            'SELECT id, movement_date, product_id, product_name, variant_key, unit,
+                    quantity, user_label, reference, remarks,
+                    CASE transaction_type WHEN "damaged" THEN "Damaged" ELSE "Expired" END AS action
+             FROM ' . Schema::t('inventory_transactions') . '
+             WHERE transaction_type IN ("damaged", "expired")
+             ORDER BY id DESC',
         );
         return array_map(static fn (array $row) => [
             'id' => 'ISS-' . $row['id'],
@@ -310,10 +379,10 @@ final class StateRepository
     private static function attendance(array $user): array
     {
         if (($user['role'] ?? '') === 'admin') {
-            $rows = Database::fetchAll('SELECT * FROM attendance ORDER BY work_date DESC, employee_name ASC');
+            $rows = Database::fetchAll('SELECT * FROM ' . Schema::t('attendance') . ' ORDER BY work_date DESC, employee_name ASC');
         } else {
             $rows = Database::fetchAll(
-                'SELECT * FROM attendance WHERE employee_code = ? ORDER BY work_date DESC',
+                'SELECT * FROM ' . Schema::t('attendance') . ' WHERE employee_code = ? ORDER BY work_date DESC',
                 [$user['code']],
             );
         }
@@ -333,7 +402,11 @@ final class StateRepository
 
     private static function auditLogs(): array
     {
-        $rows = Database::fetchAll('SELECT * FROM audit_logs ORDER BY id DESC LIMIT 1000');
+        $rows = Database::fetchAll(
+            'SELECT * FROM ' . Schema::t('audit_logs') . '
+             WHERE category = "business"
+             ORDER BY id DESC LIMIT 1000',
+        );
         return array_map(static fn (array $row) => [
             'id' => 'AUD-' . $row['id'],
             'action' => $row['action'],
@@ -346,7 +419,7 @@ final class StateRepository
 
     private static function settings(): array
     {
-        $row = Database::fetchOne('SELECT * FROM settings WHERE id = 1 LIMIT 1');
+        $row = Database::fetchOne('SELECT * FROM ' . Schema::t('settings') . ' WHERE id = 1 LIMIT 1');
         if (!$row) {
             return [
                 'store_name' => 'Guinhawa Poultry Supply',

@@ -8,7 +8,7 @@
   <meta name="description" content="Guinhawa Poultry Supply admin dashboard.">
   <title>Dashboard &middot; Guinhawa Admin</title>
 
-  <script src="/guinhawa_system/shared/js/theme-init.js"></script>
+  <script src="/guinhawa_system/shared/js/theme-init.js?v=cleanup-20261122-2"></script>
   <link rel="icon" type="image/png" href="/guinhawa_system/assets/images/guinhawa-logo.png">
   <link rel="stylesheet" href="/guinhawa_system/shared/bootstrap5/css/bootstrap.min.css">
   <link rel="stylesheet" href="/guinhawa_system/shared/bootstrap-icons/bootstrap-icons.min.css">
@@ -39,14 +39,6 @@
           <div class="hero-clock" role="timer" aria-label="Current local time">
             <span class="hero-clock__time" id="heroClockTime">--:--:--</span>
             <span class="hero-clock__hint"><span class="hero-clock__dot" aria-hidden="true"></span> Live local time</span>
-          </div>
-          <div class="hero__actions">
-            <a class="btn-light-app" href="transactions.php?new=1">
-              <i class="bi bi-plus-lg" aria-hidden="true"></i> New sale
-            </a>
-            <a class="btn-ghost-app" href="stock-in.php">
-              <i class="bi bi-box-arrow-in-down" aria-hidden="true"></i> Stock in
-            </a>
           </div>
         </div>
       </section>
@@ -125,30 +117,43 @@
           <section class="panel">
             <div class="panel__header">
               <div>
-                <h2 class="panel__title"><i class="bi bi-graph-up" aria-hidden="true"></i> Weekly sales</h2>
-                <p class="panel__sub" id="weekSub">Completed sales for the last seven days</p>
+                <h2 class="panel__title"><i class="bi bi-graph-up" aria-hidden="true"></i> Sales report</h2>
+                <p class="panel__sub" id="salesSub">Completed sales for the last seven days</p>
               </div>
-              <span class="badge-soft" id="weekTotal">&mdash;</span>
+              <span class="badge-soft" id="salesTotal">&mdash;</span>
             </div>
             <div class="panel__body">
               <div class="sales-toolbar">
-                <div class="seg-toggle" role="group" aria-label="Sales chart range">
+                <div class="seg-toggle" role="group" aria-label="Sales report range">
+                  <button type="button" class="seg-toggle__btn" data-sales-mode="today" aria-pressed="false">Today</button>
+                  <button type="button" class="seg-toggle__btn" data-sales-mode="date" aria-pressed="false">Specific date</button>
                   <button type="button" class="seg-toggle__btn is-active" data-sales-mode="rolling" aria-pressed="true">Last 7 days</button>
-                  <button type="button" class="seg-toggle__btn" data-sales-mode="week" aria-pressed="false">Weekly (Mon&ndash;Sun)</button>
+                  <button type="button" class="seg-toggle__btn" data-sales-mode="month" aria-pressed="false">Specific month</button>
+                  <button type="button" class="seg-toggle__btn" data-sales-mode="year" aria-pressed="false">Yearly</button>
                 </div>
-                <div class="sales-week-nav" id="salesWeekNav" hidden>
-                  <button type="button" class="btn btn-icon" id="salesPrevWeek" aria-label="Previous week" title="Previous week"><i class="bi bi-chevron-left"></i></button>
-                  <label class="sales-week-pick" for="salesWeekDate">
+                <div class="sales-picker" id="salesDatePick" hidden>
+                  <label class="sales-week-pick" for="salesSpecificDate">
                     <i class="bi bi-calendar3" aria-hidden="true"></i>
-                    <input type="date" id="salesWeekDate" aria-label="Select a week">
+                    <input type="date" id="salesSpecificDate" aria-label="Select a date">
                   </label>
-                  <button type="button" class="btn btn-icon" id="salesNextWeek" aria-label="Next week" title="Next week"><i class="bi bi-chevron-right"></i></button>
+                </div>
+                <div class="sales-picker" id="salesMonthPick" hidden>
+                  <label class="sales-week-pick" for="salesMonth">
+                    <i class="bi bi-calendar3" aria-hidden="true"></i>
+                    <input type="month" id="salesMonth" aria-label="Select a month">
+                  </label>
+                </div>
+                <div class="sales-picker" id="salesYearPick" hidden>
+                  <label class="sales-week-pick" for="salesYear">
+                    <i class="bi bi-calendar3" aria-hidden="true"></i>
+                    <input type="number" id="salesYear" min="2000" max="2100" step="1" aria-label="Select a year">
+                  </label>
                 </div>
               </div>
-              <div class="chart-wrap" id="weeklySalesChart"></div>
+              <div class="chart-wrap" id="salesChart"></div>
               <div class="legend">
-                <span class="legend-item"><span class="legend-dot" style="background:var(--gq-emerald)"></span> Completed sales</span>
-                <span class="legend-item ms-auto text-app-muted" id="weekAverage">&mdash;</span>
+                <span class="legend-item"><span class="legend-dot" style="background:var(--gq-emerald)"></span> Daily sales</span>
+                <span class="legend-item ms-auto text-app-muted" id="salesAverage">&mdash;</span>
               </div>
             </div>
           </section>
@@ -157,13 +162,13 @@
           <section class="panel">
             <div class="panel__header">
               <div>
-                <h2 class="panel__title"><i class="bi bi-pie-chart" aria-hidden="true"></i> Inventory overview</h2>
-                <p class="panel__sub">Products by category</p>
+                <h2 class="panel__title"><i class="bi bi-wallet2" aria-hidden="true"></i> Payment breakdown</h2>
+                <p class="panel__sub" id="paymentSub">Revenue by payment method</p>
               </div>
-              <a class="panel-link" href="inventory.php">Open <i class="bi bi-arrow-right"></i></a>
             </div>
             <div class="panel__body">
-              <div id="inventoryDonut"></div>
+              <div id="paymentDonut"></div>
+              <div class="chart-legend-list mt-3" id="paymentLegend"></div>
             </div>
           </section>
         </div>
@@ -239,10 +244,9 @@
             </div>
             <div class="panel__body">
               <div class="quick-grid">
-                <a class="quick-action" href="transactions.php?new=1"><i class="bi bi-cart-plus" aria-hidden="true"></i> New sale</a>
-                <a class="quick-action" href="stock-in.php"><i class="bi bi-box-arrow-in-down" aria-hidden="true"></i> Stock in</a>
                 <a class="quick-action" href="products.php?new=1"><i class="bi bi-plus-square" aria-hidden="true"></i> Add product</a>
                 <a class="quick-action" href="attendance.php"><i class="bi bi-fingerprint" aria-hidden="true"></i> Attendance</a>
+                <a class="quick-action" href="reports.php"><i class="bi bi-file-earmark-bar-graph" aria-hidden="true"></i> Reports</a>
               </div>
               <div class="alert-app mt-3">
                 <i class="bi bi-info-circle" aria-hidden="true"></i>
@@ -251,9 +255,6 @@
                   MySQL database. <a class="fw-650" href="settings.php">Manage settings</a>.
                 </div>
               </div>
-              <a class="btn btn-soft w-100 mt-3" href="reports.php">
-                <i class="bi bi-file-earmark-arrow-down" aria-hidden="true"></i> Open reports &amp; exports
-              </a>
             </div>
           </section>
         </div>
@@ -266,9 +267,9 @@
   <div class="toast-container" id="toastContainer"></div>
 
   <script src="/guinhawa_system/shared/bootstrap5/js/bootstrap.bundle.min.js" defer></script>
-  <script src="/guinhawa_system/shared/js/store.js" defer></script>
-  <script src="/guinhawa_system/shared/js/charts.js" defer></script>
-  <script src="/guinhawa_system/shared/js/app.js" defer></script>
-  <script src="/guinhawa_system/shared/js/dashboard.js" defer></script>
+  <script src="/guinhawa_system/shared/js/store.js?v=cleanup-20261122-2" defer></script>
+  <script src="/guinhawa_system/shared/js/charts.js?v=cleanup-20261122-2" defer></script>
+  <script src="/guinhawa_system/shared/js/app.js?v=cleanup-20261122-2" defer></script>
+  <script src="/guinhawa_system/shared/js/dashboard.js?v=cleanup-20261122-2" defer></script>
 </body>
 </html>

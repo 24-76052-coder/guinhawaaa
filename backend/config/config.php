@@ -29,6 +29,9 @@ $config = [
         'user' => getenv('GUINHAWA_DB_USER') ?: 'root',
         'password' => getenv('GUINHAWA_DB_PASSWORD') ?: '',
         'charset' => 'utf8mb4',
+        // Staging mode keeps the application on the verified `*_new` copies.
+        // The cutover script switches this to 0 after renaming the tables.
+        'compact_staging' => filter_var(getenv('GUINHAWA_COMPACT_STAGING') ?: '0', FILTER_VALIDATE_BOOL),
     ],
 
     // PHP session cookie used by the API.

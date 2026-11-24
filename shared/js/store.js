@@ -306,13 +306,17 @@
       emailVerified: !!user.emailVerified,
       phone: user.contactNumber || "",
       employeeId: user.code || user.employeeId || "",
+      staffId: user.staffId || user.code || user.employeeId || "",
       role: demoRole(user),
       dbRole: user.role || "",
       roleLabel: user.roleLabel || "",
       status: accountStatus(user.status),
+      accountStatus: user.accountStatus || user.status || "active",
       workShift: STANDARD_WORK_SCHEDULE,
       shift: STANDARD_WORK_SCHEDULE,
       lastActive: user.lastLoginAt || null,
+      lastPasswordChange: user.lastPasswordChange || null,
+      createdAt: user.createdAt || null,
       avatar: user.avatar || "",
       mustChangePassword: !!user.mustChangePassword,
     };
@@ -325,6 +329,7 @@
       name: employee.name || employee.fullName || "",
       fullName: employee.fullName || employee.name || "",
       employeeId: employee.employeeId || employee.code || "",
+      staffId: employee.staffId || employee.employeeId || employee.code || "",
       username: employee.username || "",
       email: employee.email || "",
       emailVerified: !!employee.emailVerified,
@@ -332,11 +337,15 @@
       role: employee.role === "inventory-staff" ? "Inventory Staff" : demoRole(employee),
       dbRole: employee.dbRole || employee.role || "cashier",
       status: accountStatus(employee.status),
+      accountStatus: employee.accountStatus || employee.status || "active",
       workShift: STANDARD_WORK_SCHEDULE,
       shift: STANDARD_WORK_SCHEDULE,
       joined: toISO(employee.dateJoined || employee.createdAt),
       dateJoined: toISO(employee.dateJoined || employee.createdAt),
+      createdAt: employee.createdAt ? toISO(employee.createdAt, true) : null,
       lastActive: employee.lastLoginAt ? toISO(employee.lastLoginAt, true) : null,
+      lastPasswordChange: employee.lastPasswordChange ? toISO(employee.lastPasswordChange, true) : null,
+      mustChangePassword: !!employee.mustChangePassword,
       activationSentAt: employee.activationSentAt ? toISO(employee.activationSentAt, true) : null,
       activationExpiresAt: employee.activationExpiresAt ? toISO(employee.activationExpiresAt, true) : null,
       deletedAt: employee.deletedAt ? toISO(employee.deletedAt, true) : null,
@@ -768,7 +777,7 @@
       })
       .then(function (result) {
         if (result.status < 200 || result.status >= 300) {
-          return { ok: false, message: result.body.error || "Incorrect username or password." };
+          return { ok: false, message: result.body.error || "Incorrect email or password." };
         }
         setToken(result.body.csrfToken, !!remember);
         currentUser = mapUser(result.body.user);
@@ -1338,7 +1347,7 @@
   /* ------------------------------- Accounts ------------------------------- */
 
   function accountPayload(values) {
-    return {
+    var payload = {
       fullName: values.name,
       username: values.username,
       email: values.email || "",
@@ -1346,6 +1355,8 @@
       role: values.role === "Inventory Staff" ? "inventory-staff" : "cashier",
       status: values.status || "active",
     };
+    if (values.password) payload.password = values.password;
+    return payload;
   }
 
   function saveAccount(values, editingId) {
@@ -1355,7 +1366,6 @@
     }
 
     var body = accountPayload(values);
-    if (!existing) body.password = values.password || "";
     var result = existing
       ? api("PUT", "/admin/employees/" + existing.dbId, body)
       : api("POST", "/admin/employees", body);
@@ -1370,6 +1380,7 @@
     return {
       ok: true,
       account: account,
+      activation: result.data.activation || null,
       notification: result.data.notification || null,
       message: result.data.message || "",
     };
@@ -1432,17 +1443,26 @@
     return { ok: true };
   }
 
-  function resetAccountPassword(id) {
+  function resetAccountPassword(id, password) {
     var account = findAccount(id);
     if (!account || account.role === "Admin") {
       return { ok: false, message: "That account cannot be reset here." };
     }
-    var result = api("POST", "/admin/employees/" + account.dbId + "/reset-password");
+    var result = api(
+      "POST",
+      "/admin/employees/" + account.dbId + "/reset-password",
+      password ? { password: String(password) } : {}
+    );
     if (!result.ok) {
       handleUnauthorized(result);
       return { ok: false, message: result.message };
     }
-    return { ok: true, password: result.data.temporaryPassword || "" };
+    reload();
+    return {
+      ok: true,
+      password: result.data.temporaryPassword || "",
+      message: result.data.message || "Password reset.",
+    };
   }
 
   function deleteAccount(id) {
@@ -1528,6 +1548,7 @@
       contactNumber: values.phone || "",
     };
     if (Object.prototype.hasOwnProperty.call(values, "email")) body.email = values.email || "";
+    if (Object.prototype.hasOwnProperty.call(values, "avatar")) body.avatar = values.avatar || "";
     var result = api("PUT", "/auth/profile", body);
     if (!result.ok) {
       handleUnauthorized(result);
@@ -1537,7 +1558,7 @@
     return { ok: true };
   }
 
-  function getStaffEmailVerification() {
+  function getAccountEmailVerification() {
     var result = api("GET", "/auth/email-verification");
     if (!result.ok) {
       handleUnauthorized(result);
@@ -1546,7 +1567,7 @@
     return { ok: true, verification: result.data.verification || null };
   }
 
-  function requestStaffEmailVerification(email) {
+  function requestAccountEmailVerification(email) {
     var result = api("POST", "/auth/email-verification/request", { email: email || "" });
     if (!result.ok) {
       handleUnauthorized(result);
@@ -1555,7 +1576,7 @@
     return result.data.result || { ok: true };
   }
 
-  function verifyStaffEmail(code) {
+  function verifyAccountEmail(code) {
     var result = api("POST", "/auth/email-verification/verify", { code: code || "" });
     if (!result.ok) {
       handleUnauthorized(result);
@@ -1856,9 +1877,9 @@
     dismissResetRequest: dismissResetRequest,
 
     saveProfile: saveProfile,
-    getStaffEmailVerification: getStaffEmailVerification,
-    requestStaffEmailVerification: requestStaffEmailVerification,
-    verifyStaffEmail: verifyStaffEmail,
+    getAccountEmailVerification: getAccountEmailVerification,
+    requestAccountEmailVerification: requestAccountEmailVerification,
+    verifyAccountEmail: verifyAccountEmail,
     saveSettings: saveSettings,
     saveGcashQr: saveGcashQr,
     saveNotifications: saveNotifications,

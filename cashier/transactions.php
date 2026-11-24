@@ -8,7 +8,7 @@
   <meta name="description" content="Guinhawa Poultry Supply sales and transactions.">
   <title>Transactions &middot; Guinhawa Admin</title>
 
-  <script src="/guinhawa_system/shared/js/theme-init.js"></script>
+  <script src="/guinhawa_system/shared/js/theme-init.js?v=cleanup-20261122-2"></script>
   <link rel="icon" type="image/png" href="/guinhawa_system/assets/images/guinhawa-logo.png">
   <link rel="stylesheet" href="/guinhawa_system/shared/bootstrap5/css/bootstrap.min.css">
   <link rel="stylesheet" href="/guinhawa_system/shared/bootstrap-icons/bootstrap-icons.min.css">
@@ -121,7 +121,7 @@
           <a class="panel-link" href="/guinhawa_system/admin/reports.php" data-admin-only>Sales reports <i class="bi bi-arrow-right"></i></a>
         </div>
         <div class="panel__body panel__body--flush">
-          <div class="table-responsive">
+          <div class="table-responsive table-scroll">
             <table class="table table-app" id="transactionsTable">
               <thead>
                 <tr>
@@ -270,9 +270,9 @@
   <div class="toast-container" id="toastContainer"></div>
 
   <script src="/guinhawa_system/shared/bootstrap5/js/bootstrap.bundle.min.js" defer></script>
-  <script src="/guinhawa_system/shared/js/store.js" defer></script>
-  <script src="/guinhawa_system/shared/js/charts.js" defer></script>
-  <script src="/guinhawa_system/shared/js/app.js" defer></script>
-  <script src="/guinhawa_system/shared/js/transactions.js" defer></script>
+  <script src="/guinhawa_system/shared/js/store.js?v=cleanup-20261122-2" defer></script>
+  <script src="/guinhawa_system/shared/js/charts.js?v=cleanup-20261122-2" defer></script>
+  <script src="/guinhawa_system/shared/js/app.js?v=cleanup-20261122-2" defer></script>
+  <script src="/guinhawa_system/shared/js/transactions.js?v=cleanup-20261122-2" defer></script>
 </body>
 </html>

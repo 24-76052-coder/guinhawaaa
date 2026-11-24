@@ -23,7 +23,9 @@
 
   var salesView = {
     mode: "rolling",
-    anchor: Store.todayISO(),
+    date: Store.todayISO(),
+    month: Store.todayISO().slice(0, 7),
+    year: String(new Date().getFullYear()),
   };
 
   function isoDate(date) {
@@ -41,31 +43,76 @@
     return isNaN(d.getTime()) ? null : d;
   }
 
-  function startOfWeek(iso) {
-    var d = parseISO(iso) || new Date();
-    var shift = (d.getDay() + 6) % 7;
-    d.setDate(d.getDate() - shift);
-    return isoDate(d);
+  function firstOfMonth(yearMonth) {
+    var parts = String(yearMonth || "").split("-");
+    var year = Number(parts[0]);
+    var month = Number(parts[1]);
+    if (!year || !month || month < 1 || month > 12) {
+      return Store.todayISO().slice(0, 8) + "01";
+    }
+    return isoDate(new Date(year, month - 1, 1));
   }
 
-  function shiftISO(iso, days) {
-    var d = parseISO(iso) || new Date();
-    d.setDate(d.getDate() + days);
-    return isoDate(d);
+  function lastOfMonth(yearMonth) {
+    var parts = String(yearMonth || "").split("-");
+    var year = Number(parts[0]);
+    var month = Number(parts[1]);
+    if (!year || !month || month < 1 || month > 12) {
+      return Store.todayISO();
+    }
+    return isoDate(new Date(year, month, 0));
+  }
+
+  function monthLabel(yearMonth) {
+    var d = parseISO(firstOfMonth(yearMonth));
+    return d
+      ? d.toLocaleDateString("en-PH", { month: "long", year: "numeric" })
+      : String(yearMonth || "");
   }
 
   function salesRange() {
-    if (salesView.mode === "week") {
-      var start = startOfWeek(salesView.anchor);
-      var end = shiftISO(start, 6);
-      return { start: start, end: end, rows: Store.rangeSales(start, end) };
+    var start;
+    var end;
+    var label;
+
+    if (salesView.mode === "today") {
+      start = end = Store.todayISO();
+      label = "Today\u2019s completed sales \u00b7 " + Store.formatDate(start);
+    } else if (salesView.mode === "date") {
+      start = end = salesView.date || Store.todayISO();
+      label = "Completed sales on " + Store.formatDate(start);
+    } else if (salesView.mode === "month") {
+      start = firstOfMonth(salesView.month);
+      end = lastOfMonth(salesView.month);
+      label = "Completed sales for " + monthLabel(salesView.month);
+    } else if (salesView.mode === "year") {
+      start = String(salesView.year) + "-01-01";
+      end = salesView.year + "-12-31";
+      label = "Completed sales for " + salesView.year;
+
+      var months = [];
+      for (var m = 1; m <= 12; m++) {
+        var key = salesView.year + "-" + String(m).padStart(2, "0");
+        var monthDate = new Date(Number(salesView.year), m - 1, 1);
+        months.push({
+          date: firstOfMonth(key),
+          label: monthDate.toLocaleDateString("en-PH", { month: "short" }),
+          fullLabel: monthDate.toLocaleDateString("en-PH", { month: "long", year: "numeric" }),
+          value: Store.salesTotalBetween(firstOfMonth(key), lastOfMonth(key)),
+        });
+      }
+      return { start: start, end: end, rows: months, label: label };
+    } else {
+      var rows = Store.weekSales(7);
+      return {
+        start: rows.length ? rows[0].date : Store.todayISO(),
+        end: rows.length ? rows[rows.length - 1].date : Store.todayISO(),
+        rows: rows,
+        label: "Completed sales for the last seven days",
+      };
     }
-    var rows = Store.weekSales(7);
-    return {
-      start: rows.length ? rows[0].date : Store.todayISO(),
-      end: rows.length ? rows[rows.length - 1].date : Store.todayISO(),
-      rows: rows,
-    };
+
+    return { start: start, end: end, rows: Store.rangeSales(start, end), label: label };
   }
 
   function renderGreeting() {
@@ -282,83 +329,77 @@
     }
   }
 
-  function renderCharts() {
-    var range = salesRange();
-    var week = range.rows;
-    var total = week.reduce(function (sum, row) {
+  function renderPayments(range) {
+    var totals = {};
+    Store.salesBetween(range.start, range.end).forEach(function (txn) {
+      var method = txn.payment || "Cash";
+      totals[method] = (totals[method] || 0) + Number(txn.total || 0);
+    });
+
+    var segments = Object.keys(totals)
+      .sort(function (a, b) {
+        return totals[b] - totals[a];
+      })
+      .map(function (method, index) {
+        return {
+          label: method,
+          value: totals[method],
+          color: Charts.palette[index % Charts.palette.length],
+          display: Store.money(totals[method]),
+        };
+      });
+
+    var total = segments.reduce(function (sum, row) {
       return sum + row.value;
     }, 0);
-    var dayCount = week.length || 7;
 
-    if ($("weekTotal")) {
-      $("weekTotal").textContent = Store.money(total);
+    if ($("paymentSub")) {
+      $("paymentSub").textContent = range.label;
     }
-    if ($("weekSub")) {
-      $("weekSub").textContent =
-        salesView.mode === "week"
-          ? "Completed sales \u00b7 " +
-            Store.formatDate(range.start) +
-            " \u2013 " +
-            Store.formatDate(range.end)
-          : "Completed sales for the last seven days";
+    if ($("paymentDonut")) {
+      Charts.donutChart($("paymentDonut"), segments, {
+        outsideLabels: true,
+        centerLabel: "Revenue",
+        centerValue: Store.money(total),
+        ariaLabel: "Revenue by payment method for " + range.label,
+      });
     }
-    if ($("weekAverage")) {
-      $("weekAverage").textContent =
-        "Daily average " + Store.money(total / dayCount);
+    if ($("paymentLegend")) {
+      $("paymentLegend").innerHTML = segments.length
+        ? Charts.legendHTML(segments)
+        : '<div class="text-app-muted" style="font-size:.8rem">No payments in this range.</div>';
     }
-    if ($("weeklySalesChart")) {
-      Charts.lineChart($("weeklySalesChart"), week, {
+  }
+
+  function renderCharts() {
+    var range = salesRange();
+    var rows = range.rows;
+    var total = rows.reduce(function (sum, row) {
+      return sum + row.value;
+    }, 0);
+    var dayCount = rows.length || 1;
+
+    if ($("salesTotal")) {
+      $("salesTotal").textContent = Store.money(total);
+    }
+    if ($("salesSub")) {
+      $("salesSub").textContent = range.label;
+    }
+    if ($("salesAverage")) {
+      var averageLabel = salesView.mode === "year" ? "Monthly average " : "Daily average ";
+      var averageValue = salesView.mode === "year" ? total / 12 : total / dayCount;
+      $("salesAverage").textContent = averageLabel + Store.money(averageValue);
+    }
+    if ($("salesChart")) {
+      Charts.lineChart($("salesChart"), rows, {
         currency: true,
         symbol: Store.data.settings.currency,
         height: 268,
-        ariaLabel:
-          salesView.mode === "week"
-            ? "Weekly sales for " +
-              Store.formatDate(range.start) +
-              " to " +
-              Store.formatDate(range.end)
-            : "Weekly sales for the last seven days",
+        ariaLabel: "Sales report \u00b7 " + range.label,
       });
     }
 
-    var categories = {};
-    Store.data.products.forEach(function (product) {
-      if (!categories[product.category]) {
-        categories[product.category] = { label: product.category, value: 0 };
-      }
-      categories[product.category].value += 1;
-    });
-
-    var rows = Object.keys(categories)
-      .map(function (key) {
-        return categories[key];
-      })
-      .sort(function (a, b) {
-        return b.value - a.value;
-      });
-
-    var palette = Charts.palette;
-    var segments = rows.map(function (row, index) {
-      return {
-        label: row.label,
-        value: row.value,
-        color: palette[index % palette.length],
-        display: String(row.value),
-      };
-    });
-
-    var totalProducts = segments.reduce(function (sum, row) {
-      return sum + row.value;
-    }, 0);
-
-    if ($("inventoryDonut")) {
-      Charts.donutChart($("inventoryDonut"), segments, {
-        outsideLabels: true,
-        centerLabel: "Products",
-        centerValue: Store.number(totalProducts),
-        ariaLabel: "Product count by category",
-      });
-    }
+    renderPayments(range);
   }
 
   function renderTopProducts() {
@@ -486,7 +527,7 @@
           "</span>" +
           "</div>" +
           UI.statusBadge(state.label, state.badge) +
-          '<a class="btn btn-icon btn-icon--success" href="stock-in.php?product=' +
+          '<a class="btn btn-icon btn-icon--success" href="inventory.php?panel=in&product=' +
           encodeURIComponent(product.id) +
           '" aria-label="Stock in ' +
           UI.escape(product.name) +
@@ -504,20 +545,21 @@
       button.setAttribute("aria-pressed", active ? "true" : "false");
     });
 
-    var nav = $("salesWeekNav");
-    if (nav) nav.hidden = salesView.mode !== "week";
+    if ($("salesDatePick")) $("salesDatePick").hidden = salesView.mode !== "date";
+    if ($("salesMonthPick")) $("salesMonthPick").hidden = salesView.mode !== "month";
+    if ($("salesYearPick")) $("salesYearPick").hidden = salesView.mode !== "year";
 
-    var picker = $("salesWeekDate");
-    if (picker) {
-      picker.value = salesView.anchor;
-      picker.max = Store.todayISO();
+    if ($("salesSpecificDate")) {
+      $("salesSpecificDate").value = salesView.date;
+      $("salesSpecificDate").max = Store.todayISO();
     }
-
-    var next = $("salesNextWeek");
-    if (next) {
-      next.disabled =
-        salesView.mode === "week" &&
-        startOfWeek(salesView.anchor) >= startOfWeek(Store.todayISO());
+    if ($("salesMonth")) {
+      $("salesMonth").value = salesView.month;
+      $("salesMonth").max = Store.todayISO().slice(0, 7);
+    }
+    if ($("salesYear")) {
+      $("salesYear").value = salesView.year;
+      $("salesYear").max = String(new Date().getFullYear());
     }
   }
 
@@ -525,38 +567,31 @@
     document.querySelectorAll("[data-sales-mode]").forEach(function (button) {
       button.addEventListener("click", function () {
         salesView.mode = button.getAttribute("data-sales-mode");
-        if (salesView.mode === "week") {
-          salesView.anchor = salesView.anchor || Store.todayISO();
-        }
         syncSalesControls();
         renderCharts();
       });
     });
 
-    var picker = $("salesWeekDate");
-    if (picker) {
-      picker.addEventListener("change", function (event) {
+    if ($("salesSpecificDate")) {
+      $("salesSpecificDate").addEventListener("change", function (event) {
         if (!event.target.value) return;
-        salesView.anchor = event.target.value;
+        salesView.date = event.target.value;
         renderCharts();
       });
     }
-
-    function shiftWeek(days) {
-      salesView.mode = "week";
-      salesView.anchor = shiftISO(salesView.anchor, days);
-      syncSalesControls();
-      renderCharts();
-    }
-
-    if ($("salesPrevWeek")) {
-      $("salesPrevWeek").addEventListener("click", function () {
-        shiftWeek(-7);
+    if ($("salesMonth")) {
+      $("salesMonth").addEventListener("change", function (event) {
+        if (!event.target.value) return;
+        salesView.month = event.target.value;
+        renderCharts();
       });
     }
-    if ($("salesNextWeek")) {
-      $("salesNextWeek").addEventListener("click", function () {
-        shiftWeek(7);
+    if ($("salesYear")) {
+      $("salesYear").addEventListener("change", function (event) {
+        var value = Number(event.target.value);
+        if (!value || value < 2000 || value > 2100) return;
+        salesView.year = String(value);
+        renderCharts();
       });
     }
   }

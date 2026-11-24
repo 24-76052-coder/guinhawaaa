@@ -80,6 +80,16 @@ final class Web
         $_SESSION['auth_flashes'][] = ['type' => $type, 'message' => $message];
     }
 
+    /** Browser-facing guidance when the CLI administrator setup has not run. */
+    public static function setupRequired(): never
+    {
+        self::abort(
+            503,
+            'Setup required',
+            'Create the administrator first. Run backend/scripts/setup_admin.php from a terminal, then reload this page.'
+        );
+    }
+
     /** @return array<int, array{type: string, message: string}> */
     public static function takeFlashes(): array
     {

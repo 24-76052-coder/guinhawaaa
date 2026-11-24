@@ -12,7 +12,6 @@
   var passwordForm = document.getElementById("passwordForm");
   var successPanel = document.getElementById("successPanel");
   var forgotLinks = document.getElementById("forgotLinks");
-  var forgotNote = document.getElementById("forgotNote");
   var subtitle = document.getElementById("forgotSubtitle");
 
   if (!Store || !emailForm || !otpForm || !passwordForm) return;
@@ -28,7 +27,6 @@
   var resendButton = document.getElementById("resendButton");
   var resendLabel = document.getElementById("resendLabel");
   var changeEmailButton = document.getElementById("changeEmailButton");
-  var otpEmail = document.getElementById("otpEmail");
   var successMessage = document.getElementById("successMessage");
 
   var emailStatus = document.getElementById("emailStatus");
@@ -87,26 +85,13 @@
     if (forgotLinks) forgotLinks.classList.toggle("is-hidden", step === "success");
 
     if (step === "email") {
-      subtitle.textContent =
-        "Enter the email registered to your account. We will send a 6-digit verification code so you can choose a new password.";
-      if (forgotNote) {
-        forgotNote.textContent =
-          "Codes work once, expire after 5 minutes and allow 5 attempts. Only the registered email address can receive a code.";
-      }
+      subtitle.textContent = "We'll send a reset code to your email.";
       emailInput.focus();
     } else if (step === "otp") {
-      subtitle.textContent = "Check your inbox and enter the 6-digit code from the email.";
-      if (forgotNote) {
-        forgotNote.textContent =
-          "Did not receive it? Check the spam folder, wait for the countdown, then resend. Codes expire after 5 minutes.";
-      }
+      subtitle.textContent = "Open the link or enter the 6-digit code.";
       otpInput.focus();
     } else if (step === "password") {
-      subtitle.textContent = "Your code was verified. Choose a new password you have not used before.";
-      if (forgotNote) {
-        forgotNote.textContent =
-          "Your password is stored as a one-way hash. Guinhawa staff will never ask you to share it.";
-      }
+      subtitle.textContent = "Choose a new password.";
       newPassword.focus();
     }
   }
@@ -155,22 +140,15 @@
   function requestCode(event, isResend) {
     if (event) event.preventDefault();
 
-    var email = emailInput.value.trim().toLowerCase();
-    var targetStatus = isResend ? otpStatus : emailStatus;
-    var button = isResend ? resendButton : sendCodeButton;
+    var email = isResend ? state.email : emailInput.value.trim().toLowerCase();
 
     if (!email) {
-      fieldError(emailInput, emailError, "Enter your registered email address.");
+      fieldError(emailInput, emailError, "Enter your email.");
       return;
     }
 
-    var control = emailInput;
-    if (control.validity && control.validity.typeMismatch) {
-      fieldError(emailInput, emailError, "Enter a valid email address, for example name@guinhawa.ph.");
-      return;
-    }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      fieldError(emailInput, emailError, "Enter a valid email address, for example name@guinhawa.ph.");
+      fieldError(emailInput, emailError, "Enter a valid email.");
       return;
     }
 
@@ -181,8 +159,8 @@
       resendButton.disabled = true;
       setStatus(otpStatus, "Sending a new code\u2026", "info");
     } else {
-      setBusy(sendCodeButton, true, "Sending", "Send verification code");
-      setStatus(emailStatus, "Checking your email address\u2026", "info");
+      setBusy(sendCodeButton, true, "Sending", "Send code");
+      setStatus(emailStatus, "Sending your code\u2026", "info");
     }
 
     Store.forgotPassword(email).then(function (result) {
@@ -199,19 +177,18 @@
         return;
       }
 
-      setBusy(sendCodeButton, false, "Sending", "Send verification code");
+      setBusy(sendCodeButton, false, "Sending", "Send code");
 
       if (!result.ok) {
         setStatus(emailStatus, result.message, "error");
         return;
       }
 
-      otpEmail.textContent = email;
       otpInput.value = "";
       clearFieldError(otpInput, otpError);
       setStatus(
         otpStatus,
-        (result.body && result.body.message) || "If that address is registered, a 6-digit code is on its way.",
+        (result.body && result.body.message) || "If registered, a code is on its way.",
         "info"
       );
       setStatus(emailStatus, "", "");
@@ -258,7 +235,7 @@
 
     var code = otpInput.value.replace(/\D+/g, "");
     if (code.length !== 6) {
-      fieldError(otpInput, otpError, "Enter the full 6-digit code from the email.");
+      fieldError(otpInput, otpError, "Enter the 6-digit code.");
       return;
     }
 
@@ -323,22 +300,19 @@
 
     clearFieldError(newPassword, newPasswordError);
     clearFieldError(confirmPassword, confirmPasswordError);
-    setBusy(savePasswordButton, true, "Saving", "Save new password");
-    setStatus(passwordStatus, "Saving your new password\u2026", "info");
+    setBusy(savePasswordButton, true, "Saving", "Save password");
+    setStatus(passwordStatus, "Saving\u2026", "info");
 
     Store.completePasswordReset(value, confirm).then(function (result) {
-      setBusy(savePasswordButton, false, "Saving", "Save new password");
+      setBusy(savePasswordButton, false, "Saving", "Save password");
 
       if (!result.ok) {
         setStatus(passwordStatus, result.message, "error");
         return;
       }
 
-      var username = result.body && result.body.username ? result.body.username : "";
       if (successMessage) {
-        successMessage.textContent = username
-          ? "Sign in as @" + username + " with your new password."
-          : "You can now sign in with your new password.";
+        successMessage.textContent = "You can sign in now.";
       }
       passwordForm.reset();
       showStep("success");

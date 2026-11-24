@@ -9,6 +9,7 @@ use Guinhawa\Auth;
 use Guinhawa\Database;
 use Guinhawa\Http;
 use Guinhawa\HttpException;
+use Guinhawa\Schema;
 use Guinhawa\StaffActivationService;
 use Guinhawa\StaffRecoveryService;
 use Guinhawa\Users;
@@ -20,9 +21,8 @@ final class EmployeeController
     {
         Auth::requireUser();
         $rows = Database::fetchAll(
-            "SELECT id, employee_id, username, full_name, email, email_verified, contact_number, avatar, role, status,
-                    must_change_password, temp_password_expires_at, last_login_at, created_at, updated_at
-             FROM employees
+            "SELECT *, employee_code AS employee_id
+             FROM " . Schema::t('users') . "
              WHERE status = 'active' AND deleted_at IS NULL
                AND role IN ('inventory-staff', 'cashier', 'counter-staff', 'staff')
              ORDER BY full_name ASC",
@@ -56,14 +56,13 @@ final class EmployeeController
         }
         if ($search !== '') {
             $term = '%' . str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $search) . '%';
-            $where[] = '(full_name LIKE ? OR employee_id LIKE ? OR username LIKE ? OR email LIKE ? OR contact_number LIKE ?)';
+            $where[] = '(full_name LIKE ? OR employee_code LIKE ? OR username LIKE ? OR email LIKE ? OR contact_number LIKE ?)';
             array_push($params, $term, $term, $term, $term, $term);
         }
 
         $rows = Database::fetchAll(
-            'SELECT id, employee_id, username, full_name, email, email_verified, contact_number, avatar, role,
-                    date_joined, status, must_change_password, temp_password_expires_at, last_login_at, created_at, updated_at
-             FROM employees
+            'SELECT *, employee_code AS employee_id
+             FROM ' . Schema::t('users') . '
              WHERE ' . implode(' AND ', $where) . "
              ORDER BY status = 'active' DESC, status = 'pending' DESC, full_name ASC",
             $params,
@@ -77,14 +76,11 @@ final class EmployeeController
         $actor = Auth::requireAdmin();
         $body = Http::body();
 
-        $result = AccountService::createEmployee(
-            $body,
-            $actor,
-        );
+        $result = AccountService::createEmployee($body, $actor);
 
         Http::json([
             'account' => $result['account'],
-            'message' => 'Staff account created. Share the username and initial password with the staff member securely.',
+            'message' => 'Staff account created. Share the default password securely; the staff member must change it on first sign-in.',
         ], 201);
     }
 
@@ -110,12 +106,14 @@ final class EmployeeController
     public static function resetPassword(int $id): never
     {
         $actor = Auth::requireAdmin();
-        $result = AccountService::resetEmployeePassword($id, $actor);
+        $body = Http::body();
+        $result = AccountService::resetEmployeePassword($id, $actor, (string) ($body['password'] ?? ''));
 
         Http::json([
             'temporaryPassword' => $result['password'],
             'expiresAt' => $result['expiresAt'],
             'account' => $result['account'],
+            'message' => 'Password reset. The staff member must change it on the next sign-in.',
         ]);
     }
 
@@ -213,13 +211,17 @@ final class EmployeeController
     public static function auditLogs(): never
     {
         Auth::requireAdmin();
-        $rows = Database::fetchAll('SELECT * FROM account_audit_logs ORDER BY created_at DESC, id DESC LIMIT 300');
+        $rows = Database::fetchAll(
+            'SELECT * FROM ' . Schema::t('audit_logs') . '
+             WHERE category = "account"
+             ORDER BY created_at DESC, id DESC LIMIT 300',
+        );
 
         $logs = array_map(static function (array $row): array {
             $timestamp = strtotime((string) $row['created_at']);
             return [
                 'id' => 'ACC-' . $row['id'],
-                'user' => $row['actor_name'] ?: 'System',
+                'user' => $row['actor'] ?: 'System',
                 'action' => $row['action'],
                 'details' => $row['target_employee_id']
                     ? $row['details'] . ' [' . $row['target_employee_id'] . ']'

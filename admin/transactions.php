@@ -8,7 +8,7 @@
   <meta name="description" content="Guinhawa Poultry Supply sales and transactions.">
   <title>Transactions &middot; Guinhawa Admin</title>
 
-  <script src="/guinhawa_system/shared/js/theme-init.js"></script>
+  <script src="/guinhawa_system/shared/js/theme-init.js?v=cleanup-20261122-2"></script>
   <link rel="icon" type="image/png" href="/guinhawa_system/assets/images/guinhawa-logo.png">
   <link rel="stylesheet" href="/guinhawa_system/shared/bootstrap5/css/bootstrap.min.css">
   <link rel="stylesheet" href="/guinhawa_system/shared/bootstrap-icons/bootstrap-icons.min.css">
@@ -30,18 +30,12 @@
           <h1 class="page-title">Transactions &amp; Sales</h1>
           <p class="page-sub">
             Every counter sale, payment method, and receipt in one place.
-            Recording a sale deducts stock and writes to inventory history automatically.
+            Review receipts, update payment status, and export sales reports here.
           </p>
         </div>
         <div class="page-actions">
           <button class="btn btn-outline-app" type="button" id="exportTransactions">
             <i class="bi bi-download" aria-hidden="true"></i> Export CSV
-          </button>
-          <a class="btn btn-outline-app" href="/guinhawa_system/cashier/index.php">
-            <i class="bi bi-cart3" aria-hidden="true"></i> Open POS
-          </a>
-          <button class="btn btn-brand" type="button" id="newSaleBtn">
-            <i class="bi bi-cart-plus" aria-hidden="true"></i> New sale
           </button>
         </div>
       </div>
@@ -121,7 +115,7 @@
           <a class="panel-link" href="reports.php">Sales reports <i class="bi bi-arrow-right"></i></a>
         </div>
         <div class="panel__body panel__body--flush">
-          <div class="table-responsive">
+          <div class="table-responsive table-scroll">
             <table class="table table-app" id="transactionsTable">
               <thead>
                 <tr>
@@ -149,94 +143,6 @@
     </main>
 
     <div id="footerRoot"></div>
-  </div>
-
-  <!-- New sale modal -->
-  <div class="modal fade" id="saleModal" tabindex="-1" aria-labelledby="saleModalTitle" aria-hidden="true">
-    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
-      <div class="modal-content">
-        <div class="modal-header">
-          <div class="d-flex align-items-center gap-3">
-            <div class="modal-icon"><i class="bi bi-cart-plus" aria-hidden="true"></i></div>
-            <div>
-              <h2 class="modal-title" id="saleModalTitle">Record a new sale</h2>
-              <div class="text-app-muted" style="font-size:.8rem">Stock is checked and deducted when you save</div>
-            </div>
-          </div>
-          <button type="button" class="btn-close btn-close-app" data-bs-dismiss="modal" aria-label="Close"></button>
-        </div>
-        <form id="saleForm" novalidate>
-          <div class="modal-body">
-            <div class="row g-3 mb-3">
-              <div class="col-md-4">
-                <label class="form-label" for="saleCustomer">Customer <span class="req">*</span></label>
-                <input class="form-control" id="saleCustomer" type="text" list="customerOptions" placeholder="Walk-in Customer" required>
-                <datalist id="customerOptions"></datalist>
-                <div class="invalid-feedback">Enter a customer name or choose Walk-in Customer.</div>
-              </div>
-              <div class="col-md-3">
-                <label class="form-label" for="saleCashier">Cashier</label>
-                <select class="form-select" id="saleCashier"></select>
-              </div>
-              <div class="col-md-3">
-                <label class="form-label" for="salePayment">Payment</label>
-                <select class="form-select" id="salePayment">
-                  <option value="Cash">Cash</option>
-                  <option value="GCash">GCash</option>
-                </select>
-              </div>
-              <div class="col-md-2">
-                <label class="form-label" for="saleOrderType">Order type</label>
-                <select class="form-select" id="saleOrderType">
-                  <option value="Walk-in">Walk-in</option>
-                  <option value="Online">Online</option>
-                </select>
-              </div>
-            </div>
-
-            <div class="d-flex align-items-center justify-content-between mb-2">
-              <span class="form-section-title mb-0">Items sold</span>
-              <span class="pill-count" id="saleLineCount">0 lines</span>
-            </div>
-            <div class="sale-lines mb-2" id="saleLines"></div>
-            <button class="btn btn-soft btn-row mb-3" type="button" id="addSaleLine">
-              <i class="bi bi-plus-lg" aria-hidden="true"></i> Add another product
-            </button>
-
-            <div class="row g-3">
-              <div class="col-md-6">
-                <label class="form-label" for="saleNotes">Notes</label>
-                <textarea class="form-control" id="saleNotes" rows="2" placeholder="Optional notes for this sale."></textarea>
-              </div>
-              <div class="col-md-6">
-                <label class="form-label" for="saleDiscount">Discount (&#8369;)</label>
-                <input class="form-control" id="saleDiscount" type="number" min="0" step="0.01" value="0">
-                <div class="form-text">Applied after the subtotal.</div>
-              </div>
-            </div>
-
-            <div class="alert-app alert-app--danger mt-3 d-none" id="saleError"></div>
-
-            <div class="sale-total mt-3">
-              <div>
-                <span class="text-app-muted" style="font-size:.8rem">Subtotal</span>
-                <div class="text-tabular" id="saleSubtotal">&#8369;0.00</div>
-              </div>
-              <div class="text-end">
-                <span class="text-app-muted" style="font-size:.8rem">Amount due</span>
-                <strong id="saleTotal">&#8369;0.00</strong>
-              </div>
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button type="button" class="btn btn-outline-app" data-bs-dismiss="modal">Cancel</button>
-            <button type="submit" class="btn btn-brand" id="completeSaleBtn">
-              <i class="bi bi-check2-circle" aria-hidden="true"></i> Complete sale
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
   </div>
 
   <!-- Transaction detail modal -->
@@ -270,9 +176,9 @@
   <div class="toast-container" id="toastContainer"></div>
 
   <script src="/guinhawa_system/shared/bootstrap5/js/bootstrap.bundle.min.js" defer></script>
-  <script src="/guinhawa_system/shared/js/store.js" defer></script>
-  <script src="/guinhawa_system/shared/js/charts.js" defer></script>
-  <script src="/guinhawa_system/shared/js/app.js" defer></script>
-  <script src="/guinhawa_system/shared/js/transactions.js" defer></script>
+  <script src="/guinhawa_system/shared/js/store.js?v=cleanup-20261122-2" defer></script>
+  <script src="/guinhawa_system/shared/js/charts.js?v=cleanup-20261122-2" defer></script>
+  <script src="/guinhawa_system/shared/js/app.js?v=cleanup-20261122-2" defer></script>
+  <script src="/guinhawa_system/shared/js/transactions.js?v=cleanup-20261122-2" defer></script>
 </body>
 </html>

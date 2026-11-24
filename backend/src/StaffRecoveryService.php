@@ -13,9 +13,8 @@ namespace Guinhawa;
  * 3. The staff member exchanges the code for a short-lived reset token and sets
  *    a new password.
  *
- * Codes and tokens are only ever stored as hashes. Requests live in the same
- * `password_reset_requests` table the Admin recovery flow uses, with
- * user_type = 'employee' and channel = 'recovery_code'.
+ * Codes and tokens are only ever stored as hashes. Requests live in the unified
+ * `password_reset_tokens` table with channel = 'recovery_code'.
  */
 final class StaffRecoveryService
 {
@@ -60,8 +59,8 @@ final class StaffRecoveryService
         }
 
         $ipCount = Database::fetchOne(
-            'SELECT COUNT(*) AS total FROM password_reset_requests
-             WHERE requested_ip = ? AND user_type = "employee"
+            'SELECT COUNT(*) AS total FROM ' . Schema::t('password_reset_tokens') . '
+             WHERE requested_ip = ? AND channel = "recovery_code"
                AND created_at >= DATE_SUB(NOW(), INTERVAL ? SECOND)',
             [substr($ip, 0, 45), self::REQUEST_WINDOW_SECONDS],
         );
@@ -70,13 +69,14 @@ final class StaffRecoveryService
         }
 
         $employee = Database::fetchOne(
-            'SELECT * FROM employees
-             WHERE status = "active" AND (username = ? OR employee_id = ? OR (email_verified = 1 AND email = ?))
+            'SELECT * FROM ' . Schema::t('users') . '
+             WHERE status = "active" AND deleted_at IS NULL
+               AND (username = ? OR employee_code = ? OR (email_verified = 1 AND email = ?))
              LIMIT 1',
             [$identifier, $identifier, $identifier],
         );
 
-        if (!$employee) {
+        if (!$employee || Users::sessionType($employee) !== 'employee') {
             // Keep the timing roughly constant for unknown accounts.
             usleep(random_int(120000, 260000));
             return $generic;
@@ -86,8 +86,8 @@ final class StaffRecoveryService
 
         // Do not stack duplicate requests while one is still open.
         $open = Database::fetchOne(
-            'SELECT id FROM password_reset_requests
-             WHERE user_type = "employee" AND user_id = ?
+            'SELECT id FROM ' . Schema::t('password_reset_tokens') . '
+             WHERE channel = "recovery_code" AND user_id = ?
                AND consumed_at IS NULL AND reset_completed_at IS NULL
                AND expires_at > NOW()
              ORDER BY id DESC LIMIT 1',
@@ -96,7 +96,7 @@ final class StaffRecoveryService
 
         if ($open) {
             $createdAt = Database::fetchOne(
-                'SELECT created_at FROM password_reset_requests WHERE id = ? LIMIT 1',
+                'SELECT created_at FROM ' . Schema::t('password_reset_tokens') . ' WHERE id = ? LIMIT 1',
                 [(int) $open['id']],
             );
             if ($createdAt && strtotime((string) $createdAt['created_at']) > time() - self::REQUEST_COOLDOWN_SECONDS) {
@@ -107,9 +107,9 @@ final class StaffRecoveryService
         }
 
         Database::execute(
-            'INSERT INTO password_reset_requests
-                (user_type, user_id, email, channel, expires_at, requested_ip)
-             VALUES ("employee", ?, ?, "recovery_code", ?, ?)',
+            'INSERT INTO ' . Schema::t('password_reset_tokens') . '
+                (user_id, email, channel, expires_at, requested_ip)
+             VALUES (?, ?, "recovery_code", ?, ?)',
             [
                 $employeeId,
                 (string) ($employee['email'] ?? ''),
@@ -121,8 +121,8 @@ final class StaffRecoveryService
         Auth::audit(
             ['type' => 'employee', 'id' => $employeeId, 'name' => (string) $employee['full_name']],
             'Staff Password Reset Requested',
-            "{$employee['full_name']} ({$employee['employee_id']}) requested a password reset code.",
-            (string) $employee['employee_id'],
+            "{$employee['full_name']} ({$employee['employee_code']}) requested a password reset code.",
+            (string) $employee['employee_code'],
         );
 
         return $generic;
@@ -138,20 +138,21 @@ final class StaffRecoveryService
         $rows = Database::fetchAll(
             'SELECT r.id, r.user_id, r.email, r.created_at, r.expires_at, r.attempts,
                     r.otp_hash IS NOT NULL AS issued,
-                    e.employee_id, e.username, e.full_name, e.role, e.status
-             FROM password_reset_requests r
-             INNER JOIN employees e ON e.id = r.user_id
-             WHERE r.user_type = "employee"
+                    u.employee_code, u.username, u.full_name, u.role, u.status
+             FROM ' . Schema::t('password_reset_tokens') . ' r
+             INNER JOIN ' . Schema::t('users') . ' u ON u.id = r.user_id
+             WHERE r.channel = "recovery_code"
                AND r.consumed_at IS NULL
                AND r.reset_completed_at IS NULL
                AND r.expires_at > NOW()
+               AND u.deleted_at IS NULL
              ORDER BY r.created_at ASC, r.id ASC',
         );
 
         return array_map(static function (array $row): array {
             return [
                 'id' => (int) $row['id'],
-                'employeeId' => (string) $row['employee_id'],
+                'employeeId' => (string) $row['employee_code'],
                 'username' => (string) $row['username'],
                 'fullName' => (string) $row['full_name'],
                 'role' => (string) $row['role'],
@@ -175,10 +176,10 @@ final class StaffRecoveryService
     public static function issueCode(int $requestId, array $actor): array
     {
         $row = Database::fetchOne(
-            'SELECT r.*, e.employee_id, e.username, e.full_name, e.status
-             FROM password_reset_requests r
-             INNER JOIN employees e ON e.id = r.user_id
-             WHERE r.id = ? AND r.user_type = "employee" LIMIT 1',
+            'SELECT r.*, u.employee_code, u.username, u.full_name, u.status
+             FROM ' . Schema::t('password_reset_tokens') . ' r
+             INNER JOIN ' . Schema::t('users') . ' u ON u.id = r.user_id
+             WHERE r.id = ? AND r.channel = "recovery_code" LIMIT 1',
             [$requestId],
         );
 
@@ -200,7 +201,7 @@ final class StaffRecoveryService
         $expiresAt = date('Y-m-d H:i:s', time() + self::CODE_TTL_SECONDS);
 
         Database::execute(
-            'UPDATE password_reset_requests
+            'UPDATE ' . Schema::t('password_reset_tokens') . '
              SET otp_hash = ?, expires_at = ?, attempts = 0,
                  reset_token_hash = NULL, token_expires_at = NULL
              WHERE id = ?',
@@ -210,8 +211,8 @@ final class StaffRecoveryService
         Auth::audit(
             $actor,
             'Staff Reset Code Issued',
-            "A one-time password reset code was issued for {$row['full_name']} ({$row['employee_id']}).",
-            (string) $row['employee_id'],
+            "A one-time password reset code was issued for {$row['full_name']} ({$row['employee_code']}).",
+            (string) $row['employee_code'],
         );
 
         return [
@@ -219,7 +220,7 @@ final class StaffRecoveryService
             'expiresAt' => $expiresAt,
             'request' => [
                 'id' => $requestId,
-                'employeeId' => (string) $row['employee_id'],
+                'employeeId' => (string) $row['employee_code'],
                 'username' => (string) $row['username'],
                 'fullName' => (string) $row['full_name'],
             ],
@@ -230,10 +231,10 @@ final class StaffRecoveryService
     public static function dismiss(int $requestId, array $actor): array
     {
         $row = Database::fetchOne(
-            'SELECT r.*, e.employee_id, e.full_name
-             FROM password_reset_requests r
-             INNER JOIN employees e ON e.id = r.user_id
-             WHERE r.id = ? AND r.user_type = "employee" LIMIT 1',
+            'SELECT r.*, u.employee_code, u.full_name
+             FROM ' . Schema::t('password_reset_tokens') . ' r
+             INNER JOIN ' . Schema::t('users') . ' u ON u.id = r.user_id
+             WHERE r.id = ? AND r.channel = "recovery_code" LIMIT 1',
             [$requestId],
         );
 
@@ -242,15 +243,15 @@ final class StaffRecoveryService
         }
 
         Database::execute(
-            'UPDATE password_reset_requests SET consumed_at = NOW() WHERE id = ?',
+            'UPDATE ' . Schema::t('password_reset_tokens') . ' SET consumed_at = NOW() WHERE id = ?',
             [$requestId],
         );
 
         Auth::audit(
             $actor,
             'Staff Reset Request Dismissed',
-            "The password reset request from {$row['full_name']} ({$row['employee_id']}) was dismissed.",
-            (string) $row['employee_id'],
+            "The password reset request from {$row['full_name']} ({$row['employee_code']}) was dismissed.",
+            (string) $row['employee_code'],
         );
 
         return ['dismissed' => true];
@@ -272,14 +273,14 @@ final class StaffRecoveryService
         }
 
         $request = Database::fetchOne(
-            'SELECT r.*, e.status
-             FROM password_reset_requests r
-             INNER JOIN employees e ON e.id = r.user_id
-             WHERE r.user_type = "employee"
+            'SELECT r.*, u.status
+             FROM ' . Schema::t('password_reset_tokens') . ' r
+             INNER JOIN ' . Schema::t('users') . ' u ON u.id = r.user_id
+             WHERE r.channel = "recovery_code"
                AND r.otp_hash IS NOT NULL
                AND r.consumed_at IS NULL
                AND r.reset_completed_at IS NULL
-               AND (e.username = ? OR e.employee_id = ? OR e.email = ?)
+               AND (u.username = ? OR u.employee_code = ? OR u.email = ?)
              ORDER BY r.id DESC LIMIT 1',
             [$identifier, $identifier, $identifier],
         );
@@ -289,7 +290,10 @@ final class StaffRecoveryService
         }
 
         if (strtotime((string) $request['expires_at']) < time()) {
-            Database::execute('UPDATE password_reset_requests SET consumed_at = NOW() WHERE id = ?', [(int) $request['id']]);
+            Database::execute(
+                'UPDATE ' . Schema::t('password_reset_tokens') . ' SET consumed_at = NOW() WHERE id = ?',
+                [(int) $request['id']],
+            );
             return ['ok' => false, 'error' => 'That reset code has expired. Ask your Administrator for a new code.'];
         }
 
@@ -298,14 +302,17 @@ final class StaffRecoveryService
         }
 
         if ((int) $request['attempts'] >= (int) $request['max_attempts']) {
-            Database::execute('UPDATE password_reset_requests SET consumed_at = NOW() WHERE id = ?', [(int) $request['id']]);
+            Database::execute(
+                'UPDATE ' . Schema::t('password_reset_tokens') . ' SET consumed_at = NOW() WHERE id = ?',
+                [(int) $request['id']],
+            );
             return ['ok' => false, 'error' => 'Too many incorrect attempts. Ask your Administrator for a new code.'];
         }
 
         if (!password_verify($normalized, (string) $request['otp_hash'])) {
             $attempts = (int) $request['attempts'] + 1;
             Database::execute(
-                'UPDATE password_reset_requests
+                'UPDATE ' . Schema::t('password_reset_tokens') . '
                  SET attempts = ?, consumed_at = CASE WHEN ? >= max_attempts THEN NOW() ELSE consumed_at END
                  WHERE id = ?',
                 [$attempts, $attempts, (int) $request['id']],
@@ -322,7 +329,7 @@ final class StaffRecoveryService
 
         $token = bin2hex(random_bytes(32));
         Database::execute(
-            'UPDATE password_reset_requests
+            'UPDATE ' . Schema::t('password_reset_tokens') . '
              SET reset_token_hash = ?, token_expires_at = ?, attempts = attempts + 1
              WHERE id = ?',
             [hash('sha256', $token), date('Y-m-d H:i:s', time() + self::TOKEN_TTL_SECONDS), (int) $request['id']],
@@ -354,8 +361,8 @@ final class StaffRecoveryService
         }
 
         $request = Database::fetchOne(
-            'SELECT * FROM password_reset_requests
-             WHERE user_type = "employee" AND reset_token_hash = ?
+            'SELECT * FROM ' . Schema::t('password_reset_tokens') . '
+             WHERE channel = "recovery_code" AND reset_token_hash = ?
                AND consumed_at IS NULL AND reset_completed_at IS NULL
                AND token_expires_at > NOW()
              ORDER BY id DESC LIMIT 1',
@@ -368,11 +375,11 @@ final class StaffRecoveryService
         }
 
         $employee = Database::fetchOne(
-            'SELECT * FROM employees WHERE id = ? LIMIT 1',
+            'SELECT * FROM ' . Schema::t('users') . ' WHERE id = ? LIMIT 1',
             [(int) $request['user_id']],
         );
 
-        if (!$employee || $employee['status'] !== 'active') {
+        if (!$employee || $employee['status'] !== 'active' || Users::sessionType($employee) !== 'employee') {
             self::clearSession();
             return ['ok' => false, 'error' => 'This account is deactivated. Contact the Administrator.'];
         }
@@ -395,7 +402,7 @@ final class StaffRecoveryService
 
         Database::transaction(static function () use ($newPassword, $employeeId, $request): void {
             Database::execute(
-                'UPDATE employees
+                'UPDATE ' . Schema::t('users') . '
                  SET password_hash = ?, must_change_password = 0, temp_password_expires_at = NULL,
                      password_changed_at = NOW(), failed_login_count = 0, locked_until = NULL
                  WHERE id = ?',
@@ -405,7 +412,7 @@ final class StaffRecoveryService
             Auth::invalidateSessions('employee', $employeeId);
 
             Database::execute(
-                'UPDATE password_reset_requests
+                'UPDATE ' . Schema::t('password_reset_tokens') . '
                  SET consumed_at = NOW(), reset_completed_at = NOW(), reset_token_hash = NULL
                  WHERE id = ?',
                 [(int) $request['id']],
@@ -417,8 +424,8 @@ final class StaffRecoveryService
         Auth::audit(
             ['type' => 'employee', 'id' => $employeeId, 'name' => (string) $employee['full_name']],
             'Staff Password Reset Completed',
-            "{$employee['full_name']} ({$employee['employee_id']}) set a new password with a one-time reset code.",
-            (string) $employee['employee_id'],
+            "{$employee['full_name']} ({$employee['employee_code']}) set a new password with a one-time reset code.",
+            (string) $employee['employee_code'],
         );
 
         return ['ok' => true, 'username' => (string) $employee['username']];

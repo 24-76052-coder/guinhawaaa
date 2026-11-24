@@ -24,7 +24,7 @@ $page = basename($script, '.php');
 $areaRoles = [
     'admin' => ['admin'],
     'inventory' => ['admin', 'inventory-staff'],
-    'cashier' => ['admin', 'cashier', 'counter-staff'],
+    'cashier' => ['cashier', 'counter-staff'],
 ];
 
 $areaPages = [
@@ -46,7 +46,7 @@ if (!isset($areaPages[$area]) || !in_array($page, $areaPages[$area], true)) {
 }
 
 if (!AccountService::adminExists()) {
-    Web::go(Web::url('auth/setup.php'));
+    Web::setupRequired();
 }
 
 $user = Auth::user();

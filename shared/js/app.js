@@ -46,32 +46,11 @@
       lowStockBadge: true,
     },
     {
-      id: "stock-in",
-      label: "Stock In",
-      icon: "bi-box-arrow-in-down",
-      href: "stock-in.php",
-      roles: ["Admin", "Inventory Staff"],
-    },
-    {
-      id: "stock-out",
-      label: "Stock Out",
-      icon: "bi-box-arrow-up",
-      href: "stock-out.php",
-      roles: ["Admin", "Inventory Staff"],
-    },
-    {
       id: "suppliers",
       label: "Suppliers",
       icon: "bi-truck",
       href: "suppliers.php",
       roles: ADMIN_ONLY,
-    },
-    {
-      id: "history",
-      label: "Inventory History",
-      icon: "bi-clock-history",
-      href: "history.php",
-      roles: ["Admin", "Inventory Staff"],
     },
     { section: "Sales & Operations" },
     {
@@ -79,7 +58,7 @@
       label: "Cashier / POS",
       icon: "bi-cart3",
       href: "/guinhawa_system/cashier/index.php",
-      roles: ["Admin", "Cashier"],
+      roles: ["Cashier"],
     },
     {
       id: "transactions",
@@ -174,6 +153,42 @@
       .join("");
   }
 
+  function avatarImageSource(value) {
+    var source = String(value || "").trim();
+    return /^(?:https?:\/\/|\/|data:image\/(?:png|jpeg|jpg|webp);base64,)/i.test(source)
+      ? source
+      : "";
+  }
+
+  function avatarMarkup(account) {
+    var source = avatarImageSource(account && account.avatar);
+    return source
+      ? '<img class="avatar__image" src="' + escapeHTML(source) + '" alt="" style="display:block;width:100%;height:100%;object-fit:cover">'
+      : escapeHTML(initials(account && account.name));
+  }
+
+  function renderAvatar(element, account) {
+    if (!element) return;
+    var source = avatarImageSource(account && account.avatar);
+    element.replaceChildren();
+    if (!source) {
+      element.textContent = initials(account && account.name);
+      return;
+    }
+    var image = document.createElement("img");
+    image.className = "avatar__image";
+    image.alt = "";
+    image.style.display = "block";
+    image.style.width = "100%";
+    image.style.height = "100%";
+    image.style.objectFit = "cover";
+    image.src = source;
+    image.addEventListener("error", function () {
+      element.textContent = initials(account && account.name);
+    }, { once: true });
+    element.appendChild(image);
+  }
+
   function param(name) {
     return new URLSearchParams(window.location.search).get(name) || "";
   }
@@ -215,7 +230,7 @@
   }
 
   function roleAreas() {
-    if (user.role === "Admin") return ["admin", "inventory", "cashier"];
+    if (user.role === "Admin") return ["admin", "inventory"];
     if (user.role === "Inventory Staff") return ["inventory"];
     return ["cashier"];
   }
@@ -480,7 +495,7 @@
       '<div class="notif-menu__foot">' +
       (canSee(PAGE_INFO.inventory)
         ? '<a class="panel-link" href="' + canonicalHref("inventory.php?status=low") + '">Review low stock <i class="bi bi-arrow-right"></i></a>'
-        : '<a class="panel-link" href="/guinhawa_system/cashier/index.php">Open the POS <i class="bi bi-arrow-right"></i></a>') +
+        : "") +
       "</div>" +
       "</div>" +
       "</div>"
@@ -531,7 +546,7 @@
       '<div class="dropdown">' +
       '<button class="user-menu" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Account menu">' +
       '<span class="avatar avatar--emerald">' +
-      escapeHTML(initials(user.name)) +
+      avatarMarkup(user) +
       "</span>" +
       "<span>" +
       '<span class="user-menu__name">' +
@@ -1438,6 +1453,7 @@
     roleHome: Store.roleHome,
     logout: Store.logout,
     initials: initials,
+    renderAvatar: renderAvatar,
     param: param,
     escape: escapeHTML,
     toast: toast,

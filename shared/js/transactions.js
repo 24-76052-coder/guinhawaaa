@@ -13,6 +13,11 @@
     return document.getElementById(id);
   };
 
+  var on = function (id, eventName, handler) {
+    var element = $(id);
+    if (element) element.addEventListener(eventName, handler);
+  };
+
   var STATUS_VARIANTS = {
     Completed: "success",
     Pending: "warning",
@@ -93,7 +98,7 @@
         10,
         "bi-receipt",
         "No transactions match",
-        "Adjust the filters, or record a new sale at the counter."
+        "Adjust the filters to see more sales."
       );
     } else {
       tbody.innerHTML = rows
@@ -313,6 +318,8 @@
   }
 
   function openSaleModal() {
+    if (!$("saleModal")) return;
+    if (!Store.getCurrentUser()) return;
     var form = $("saleForm");
     form.reset();
     form.classList.remove("was-validated");
@@ -607,13 +614,13 @@
       renderTable();
     });
 
-    $("newSaleBtn").addEventListener("click", openSaleModal);
-    $("exportTransactions").addEventListener("click", exportTransactions);
-    $("saleForm").addEventListener("submit", submitSale);
-    $("addSaleLine").addEventListener("click", function () {
+    on("newSaleBtn", "click", openSaleModal);
+    on("exportTransactions", "click", exportTransactions);
+    on("saleForm", "submit", submitSale);
+    on("addSaleLine", "click", function () {
       addSaleLine(null);
     });
-    $("saleDiscount").addEventListener("input", updateTotals);
+    on("saleDiscount", "input", updateTotals);
 
     $("transactionsBody").addEventListener("click", function (event) {
       var button = event.target.closest("[data-view]");
@@ -627,7 +634,7 @@
 
     $("printReceipt").addEventListener("click", printReceipt);
 
-    $("saleModal").addEventListener("hidden.bs.modal", function () {
+    on("saleModal", "hidden.bs.modal", function () {
       $("saleForm").classList.remove("was-validated");
       $("saleError").classList.add("d-none");
     });
@@ -645,7 +652,7 @@
     $("transactionSearch").value = state.search;
     if (state.search) renderTable();
 
-    if (UI.param("new") === "1") {
+    if (UI.param("new") === "1" && $("saleModal")) {
       window.setTimeout(openSaleModal, 220);
     }
   }

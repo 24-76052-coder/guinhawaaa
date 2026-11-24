@@ -20,6 +20,7 @@ if (PHP_SAPI !== 'cli') {
 require __DIR__ . '/../bootstrap.php';
 
 use Guinhawa\Database;
+use Guinhawa\Schema;
 use Guinhawa\Validator;
 
 function argument(string $name): ?string
@@ -41,7 +42,9 @@ echo " Guinhawa Poultry Supply - Admin Setup\n";
 echo "==============================================\n";
 
 try {
-    $existing = Database::fetchOne('SELECT id, username, full_name FROM admin WHERE id = 1 LIMIT 1');
+    $existing = Database::fetchOne(
+        'SELECT id, username, full_name FROM ' . Schema::t('users') . ' WHERE id = 1 LIMIT 1',
+    );
     if ($existing) {
         fwrite(STDERR, "\nAn administrator already exists ({$existing['username']}).\n");
         fwrite(STDERR, "This system allows exactly one Admin account. Use the Settings page to change its password.\n");
@@ -74,8 +77,10 @@ try {
     $password = Validator::password($password, 'Admin password');
 
     Database::execute(
-        'INSERT INTO admin (id, username, full_name, password_hash, must_change_password)
-         VALUES (1, ?, ?, ?, 0)',
+        'INSERT INTO ' . Schema::t('users') . '
+            (id, role, status, username, employee_code, full_name, password_hash,
+             must_change_password, password_changed_at, session_version)
+         VALUES (1, "admin", "active", ?, "ADMIN-01", ?, ?, 0, NOW(), 1)',
         [$username, $name, password_hash($password, PASSWORD_DEFAULT)],
     );
 
@@ -88,7 +93,9 @@ try {
     } else {
         echo "  Password : (the value you supplied)\n";
     }
-    echo "\nSign in at http://localhost/guinhawa/ and change the password from Settings > Profile.\n";
+    $config = require __DIR__ . '/../config/config.php';
+    $loginUrl = rtrim((string) ($config['app']['url'] ?? 'http://localhost'), '/') . '/login/index.php';
+    echo "\nSign in at {$loginUrl} and change the password from Settings > Profile.\n";
 } catch (Throwable $error) {
     fwrite(STDERR, "\nSetup failed: " . $error->getMessage() . "\n");
     fwrite(STDERR, "Make sure MySQL is running and guinhawa_db.sql has been imported.\n");

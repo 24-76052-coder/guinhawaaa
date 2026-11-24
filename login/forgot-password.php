@@ -17,14 +17,14 @@ if (\Guinhawa\Auth::user()) {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#052e21">
-  <meta name="description" content="Reset your Guinhawa Agri-Poultry Supply password with a 6-digit email code.">
+  <meta name="description" content="Reset your Guinhawa Poultry Supply password with your registered email. A secure code will be sent to that address.">
   <title>Forgot password &middot; Guinhawa Poultry Supply</title>
 
   <link rel="icon" type="image/png" href="/guinhawa_system/assets/images/guinhawa-logo.png">
   <link rel="preload" as="image" href="/guinhawa_system/assets/images/guinhawa-logo.png">
   <link rel="preload" as="image" href="/guinhawa_system/assets/images/login-background.jpg">
   <link rel="stylesheet" href="../shared/bootstrap-icons/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/style.css?v=login-brand-20261123">
 </head>
 <body>
   <main class="scene">
@@ -45,17 +45,16 @@ if (\Guinhawa\Auth::user()) {
       <div class="login-card__intro">
         <h1 class="login-card__title" id="forgot-title">Forgot password</h1>
         <p class="login-card__subtitle" id="forgotSubtitle">
-          Enter the email registered to your account. We will send a 6-digit
-          verification code so you can choose a new password.
+          We'll send a reset code to your email.
         </p>
       </div>
 
-      <!-- Step 1: email address -->
+      <!-- Step 1: registered email -->
       <form class="login-form" id="emailForm" novalidate>
-        <span class="step-tag"><i class="bi bi-envelope" aria-hidden="true"></i> Step 1 of 3 &middot; Your email</span>
+        <span class="step-tag"><i class="bi bi-envelope" aria-hidden="true"></i> 1 of 3 &middot; Email</span>
 
         <div class="field" data-field="email">
-          <label class="field__label" for="email">Registered email address</label>
+          <label class="field__label" for="email">Email</label>
           <div class="field__control">
             <span class="field__icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -68,7 +67,7 @@ if (\Guinhawa\Auth::user()) {
               id="email"
               name="email"
               type="email"
-              placeholder="name@guinhawa.ph"
+              placeholder="name@example.com"
               autocomplete="email"
               inputmode="email"
               autocapitalize="none"
@@ -81,7 +80,7 @@ if (\Guinhawa\Auth::user()) {
 
         <button class="login-button" id="sendCodeButton" type="submit">
           <span class="login-button__spinner" aria-hidden="true"></span>
-          <span class="login-button__label">Send verification code</span>
+          <span class="login-button__label">Send code</span>
           <svg class="login-button__arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M4.5 12h15"/>
             <path d="M13.5 6l6 6-6 6"/>
@@ -93,12 +92,7 @@ if (\Guinhawa\Auth::user()) {
 
       <!-- Step 2: 6-digit code -->
       <form class="login-form is-hidden" id="otpForm" novalidate>
-        <span class="step-tag"><i class="bi bi-shield-lock" aria-hidden="true"></i> Step 2 of 3 &middot; Verify code</span>
-
-        <p class="login-card__subtitle" style="margin-bottom:14px">
-          Enter the 6-digit code sent to <strong id="otpEmail">your email</strong>.
-          It expires in 5 minutes.
-        </p>
+        <span class="step-tag"><i class="bi bi-shield-lock" aria-hidden="true"></i> 2 of 3 &middot; Code</span>
 
         <div class="field" data-field="otp">
           <label class="field__label" for="otp">Verification code</label>
@@ -149,7 +143,7 @@ if (\Guinhawa\Auth::user()) {
 
       <!-- Step 3: new password -->
       <form class="login-form is-hidden" id="passwordForm" novalidate>
-        <span class="step-tag"><i class="bi bi-key" aria-hidden="true"></i> Step 3 of 3 &middot; New password</span>
+        <span class="step-tag"><i class="bi bi-key" aria-hidden="true"></i> 3 of 3 &middot; Password</span>
 
         <div class="field" data-field="newPassword">
           <label class="field__label" for="newPassword">New password</label>
@@ -183,12 +177,12 @@ if (\Guinhawa\Auth::user()) {
               </svg>
             </button>
           </div>
-          <p class="field__hint">Use 10+ characters with uppercase, lowercase and a number.</p>
+          <p class="field__hint">10+ characters, uppercase, lowercase and a number.</p>
           <p class="field__error" id="newPassword-error" role="alert"></p>
         </div>
 
         <div class="field" data-field="confirmPassword">
-          <label class="field__label" for="confirmPassword">Confirm new password</label>
+          <label class="field__label" for="confirmPassword">Confirm password</label>
           <div class="field__control">
             <span class="field__icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -201,7 +195,7 @@ if (\Guinhawa\Auth::user()) {
               id="confirmPassword"
               name="confirmPassword"
               type="password"
-              placeholder="Re-enter the new password"
+              placeholder="Re-enter password"
               autocomplete="new-password"
               minlength="10"
               required
@@ -224,7 +218,7 @@ if (\Guinhawa\Auth::user()) {
 
         <button class="login-button" id="savePasswordButton" type="submit">
           <span class="login-button__spinner" aria-hidden="true"></span>
-          <span class="login-button__label">Save new password</span>
+          <span class="login-button__label">Save password</span>
           <svg class="login-button__arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M4.5 12h15"/>
             <path d="M13.5 6l6 6-6 6"/>
@@ -236,11 +230,11 @@ if (\Guinhawa\Auth::user()) {
 
       <!-- Success -->
       <div class="is-hidden" id="successPanel">
-        <div class="login-alert" style="margin-top:26px">
+        <div class="login-alert" style="margin-top:20px">
           <i class="bi bi-check-circle" aria-hidden="true"></i>
           <div>
             <strong>Password updated.</strong>
-            <span id="successMessage">You can now sign in with your new password.</span>
+            <span id="successMessage">You can sign in now.</span>
           </div>
         </div>
         <a class="login-button" href="index.php" style="margin-top:18px;text-decoration:none">
@@ -256,26 +250,16 @@ if (\Guinhawa\Auth::user()) {
         <a href="index.php">Back to sign in</a>
       </div>
 
-      <p class="login-card__note" id="forgotNote">
-        Codes work once, expire after 5 minutes and allow 5 attempts. Only the
-        registered email address can receive a code.
-      </p>
-
       <footer class="login-card__footer">
-        <p class="slogan">
-          <span class="slogan__line" aria-hidden="true"></span>
-          Healthy Poultry, Better Tomorrow
-          <span class="slogan__line" aria-hidden="true"></span>
-        </p>
         <p class="dev-badge">
           <span class="dev-badge__dot" aria-hidden="true"></span>
-          Made by Dev, Assisted by AI.
+          Built by Dev &middot; Assisted by AI.
         </p>
       </footer>
     </section>
   </main>
 
-  <script src="../shared/js/store.js" defer></script>
-  <script src="js/forgot-password.js" defer></script>
+  <script src="../shared/js/store.js?v=store-email-only-20261123" defer></script>
+  <script src="js/forgot-password.js?v=forgot-simple-20261123" defer></script>
 </body>
 </html>

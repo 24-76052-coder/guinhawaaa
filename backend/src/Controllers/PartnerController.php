@@ -9,6 +9,7 @@ use Guinhawa\Database;
 use Guinhawa\Http;
 use Guinhawa\HttpException;
 use Guinhawa\Inventory;
+use Guinhawa\Schema;
 use Guinhawa\StateRepository;
 use Guinhawa\Validator;
 
@@ -31,7 +32,7 @@ final class PartnerController
 
         $code = Inventory::nextCode('suppliers', 'SUP');
         Database::execute(
-            'INSERT INTO suppliers (code, name, contact, email, address) VALUES (?, ?, ?, ?, ?)',
+            'INSERT INTO ' . Schema::t('suppliers') . ' (code, name, contact, email, address) VALUES (?, ?, ?, ?, ?)',
             [$code, $name, $contact, $email, $address],
         );
 
@@ -43,7 +44,7 @@ final class PartnerController
     {
         $actor = Auth::requireRole(['admin', 'inventory-staff']);
         $body = Http::body();
-        $supplier = Database::fetchOne('SELECT * FROM suppliers WHERE code = ? LIMIT 1', [$code]);
+        $supplier = Database::fetchOne('SELECT * FROM ' . Schema::t('suppliers') . ' WHERE code = ? LIMIT 1', [$code]);
         if (!$supplier) {
             throw new HttpException('Supplier not found.', 404, 'NOT_FOUND');
         }
@@ -56,11 +57,14 @@ final class PartnerController
         self::assertSupplierNameFree($name, (int) $supplier['id']);
 
         Database::execute(
-            'UPDATE suppliers SET name = ?, contact = ?, email = ?, address = ? WHERE id = ?',
+            'UPDATE ' . Schema::t('suppliers') . ' SET name = ?, contact = ?, email = ?, address = ? WHERE id = ?',
             [$name, $contact, $email, $address, (int) $supplier['id']],
         );
         // Keep the denormalised delivery label in step with a rename.
-        Database::execute('UPDATE stock_in SET supplier_name = ? WHERE supplier_id = ?', [$name, (int) $supplier['id']]);
+        Database::execute(
+            'UPDATE ' . Schema::t('inventory_transactions') . ' SET supplier_name = ? WHERE supplier_id = ?',
+            [$name, (int) $supplier['id']],
+        );
 
         Auth::businessAudit('Supplier Updated', "{$name} supplier information updated", $actor);
         Http::json(['state' => StateRepository::snapshot($actor)]);
@@ -69,19 +73,19 @@ final class PartnerController
     public static function deleteSupplier(string $code): never
     {
         $actor = Auth::requireRole(['admin', 'inventory-staff']);
-        $supplier = Database::fetchOne('SELECT * FROM suppliers WHERE code = ? LIMIT 1', [$code]);
+        $supplier = Database::fetchOne('SELECT * FROM ' . Schema::t('suppliers') . ' WHERE code = ? LIMIT 1', [$code]);
         if (!$supplier) {
             throw new HttpException('Supplier not found.', 404, 'NOT_FOUND');
         }
 
-        Database::execute('DELETE FROM suppliers WHERE id = ?', [(int) $supplier['id']]);
+        Database::execute('DELETE FROM ' . Schema::t('suppliers') . ' WHERE id = ?', [(int) $supplier['id']]);
         Auth::businessAudit('Supplier Removed', "{$supplier['name']} removed from the supplier directory", $actor);
         Http::json(['state' => StateRepository::snapshot($actor)]);
     }
 
     private static function assertSupplierNameFree(string $name, ?int $ignoreId = null): void
     {
-        $sql = 'SELECT id FROM suppliers WHERE LOWER(name) = LOWER(?)';
+        $sql = 'SELECT id FROM ' . Schema::t('suppliers') . ' WHERE LOWER(name) = LOWER(?)';
         $params = [$name];
         if ($ignoreId !== null) {
             $sql .= ' AND id <> ?';
@@ -107,7 +111,7 @@ final class PartnerController
 
         $code = Inventory::nextCode('customers', 'CUS');
         Database::execute(
-            'INSERT INTO customers (code, name, contact, email, address) VALUES (?, ?, ?, ?, ?)',
+            'INSERT INTO ' . Schema::t('customers') . ' (code, name, contact, email, address) VALUES (?, ?, ?, ?, ?)',
             [$code, $name, $contact, $email, $address],
         );
 
@@ -119,7 +123,7 @@ final class PartnerController
     {
         $actor = Auth::requireAdmin();
         $body = Http::body();
-        $customer = Database::fetchOne('SELECT * FROM customers WHERE code = ? LIMIT 1', [$code]);
+        $customer = Database::fetchOne('SELECT * FROM ' . Schema::t('customers') . ' WHERE code = ? LIMIT 1', [$code]);
         if (!$customer) {
             throw new HttpException('Customer not found.', 404, 'NOT_FOUND');
         }
@@ -130,7 +134,7 @@ final class PartnerController
         $address = Validator::optionalText($body['address'] ?? $customer['address'], 'Address', 255);
 
         Database::execute(
-            'UPDATE customers SET name = ?, contact = ?, email = ?, address = ? WHERE id = ?',
+            'UPDATE ' . Schema::t('customers') . ' SET name = ?, contact = ?, email = ?, address = ? WHERE id = ?',
             [$name, $contact, $email, $address, (int) $customer['id']],
         );
 
@@ -141,12 +145,12 @@ final class PartnerController
     public static function deleteCustomer(string $code): never
     {
         $actor = Auth::requireAdmin();
-        $customer = Database::fetchOne('SELECT * FROM customers WHERE code = ? LIMIT 1', [$code]);
+        $customer = Database::fetchOne('SELECT * FROM ' . Schema::t('customers') . ' WHERE code = ? LIMIT 1', [$code]);
         if (!$customer) {
             throw new HttpException('Customer not found.', 404, 'NOT_FOUND');
         }
 
-        Database::execute('DELETE FROM customers WHERE id = ?', [(int) $customer['id']]);
+        Database::execute('DELETE FROM ' . Schema::t('customers') . ' WHERE id = ?', [(int) $customer['id']]);
         Auth::businessAudit('Customer Removed', "{$customer['name']} removed from the customer directory", $actor);
         Http::json(['state' => StateRepository::snapshot($actor)]);
     }

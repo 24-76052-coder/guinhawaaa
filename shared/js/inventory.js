@@ -243,7 +243,7 @@
     $("stockInNotes").value = "";
     $("stockInForm").classList.remove("was-validated");
     updateStockInPreview();
-    bootstrap.Modal.getOrCreateInstance($("stockInModal")).show();
+    bootstrap.Offcanvas.getOrCreateInstance($("stockInModal")).show();
   }
 
   function openStockOut(productId) {
@@ -254,7 +254,7 @@
     $("stockOutNotes").value = "";
     $("stockOutForm").classList.remove("was-validated");
     updateStockOutPreview();
-    bootstrap.Modal.getOrCreateInstance($("stockOutModal")).show();
+    bootstrap.Offcanvas.getOrCreateInstance($("stockOutModal")).show();
   }
 
   function submitStockIn(event) {
@@ -322,9 +322,10 @@
         return;
       }
 
-      bootstrap.Modal.getOrCreateInstance($("stockInModal")).hide();
+      bootstrap.Offcanvas.getOrCreateInstance($("stockInModal")).hide();
       renderCategoryFilter();
       renderAll();
+      if (window.GuinhawaHistory) window.GuinhawaHistory.render();
       UI.refreshBadges();
       UI.toast(result.message, { title: "Stock received" });
     });
@@ -403,9 +404,10 @@
         return;
       }
 
-      bootstrap.Modal.getOrCreateInstance($("stockOutModal")).hide();
+      bootstrap.Offcanvas.getOrCreateInstance($("stockOutModal")).hide();
       renderCategoryFilter();
       renderAll();
+      if (window.GuinhawaHistory) window.GuinhawaHistory.render();
       UI.refreshBadges();
       UI.toast(result.message, { title: "Stock released" });
     });
@@ -435,6 +437,47 @@
       rows
     );
     UI.toast("Inventory CSV exported.", { type: "info", title: "Export ready" });
+  }
+
+  /* ---------------------------------- Tabs -------------------------------- */
+
+  function setInvTab(name, updateUrl) {
+    var stockPane = $("invPaneStock");
+    var historyPane = $("invPaneHistory");
+    if (!stockPane || !historyPane) return;
+
+    var isHistory = name === "history";
+    stockPane.hidden = isHistory;
+    historyPane.hidden = !isHistory;
+
+    document.querySelectorAll("[data-inv-tab]").forEach(function (button) {
+      var active = button.getAttribute("data-inv-tab") === name;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-selected", active ? "true" : "false");
+    });
+
+    if (isHistory && window.GuinhawaHistory) {
+      window.GuinhawaHistory.render();
+    }
+
+    if (updateUrl && window.history && window.history.replaceState) {
+      var url = new URL(window.location.href);
+      if (isHistory) {
+        url.searchParams.set("tab", "history");
+      } else {
+        url.searchParams.delete("tab");
+      }
+      window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+    }
+  }
+
+  function bindTabs() {
+    document.querySelectorAll("[data-inv-tab]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        setInvTab(button.getAttribute("data-inv-tab"), true);
+      });
+    });
+    setInvTab(UI.param("tab") === "history" ? "history" : "stock", false);
   }
 
   /* --------------------------------- Events ------------------------------- */
@@ -506,10 +549,10 @@
     $("stockInForm").addEventListener("submit", submitStockIn);
     $("stockOutForm").addEventListener("submit", submitStockOut);
 
-    $("stockInModal").addEventListener("hidden.bs.modal", function () {
+    $("stockInModal").addEventListener("hidden.bs.offcanvas", function () {
       $("stockInForm").classList.remove("was-validated");
     });
-    $("stockOutModal").addEventListener("hidden.bs.modal", function () {
+    $("stockOutModal").addEventListener("hidden.bs.offcanvas", function () {
       $("stockOutForm").classList.remove("was-validated");
     });
   }
@@ -520,15 +563,16 @@
     renderCategoryFilter();
     renderAll();
     bindEvents();
+    bindTabs();
 
     $("inventoryStatus").value = state.status;
 
     var productParam = UI.param("product");
-    var actionParam = UI.param("action");
+    var panelParam = UI.param("panel") || UI.param("action");
 
-    if (actionParam === "in" || actionParam === "out") {
+    if (panelParam === "in" || panelParam === "out") {
       window.setTimeout(function () {
-        if (actionParam === "in") {
+        if (panelParam === "in") {
           openStockIn(productParam || null);
         } else {
           openStockOut(productParam || null);

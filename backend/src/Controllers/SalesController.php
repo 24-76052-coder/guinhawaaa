@@ -9,6 +9,7 @@ use Guinhawa\Database;
 use Guinhawa\Http;
 use Guinhawa\HttpException;
 use Guinhawa\Inventory;
+use Guinhawa\Schema;
 use Guinhawa\StateRepository;
 use Guinhawa\Validator;
 
@@ -16,12 +17,18 @@ final class SalesController
 {
     public static function checkout(): never
     {
-        $actor = Auth::requireRole(['admin', 'cashier']);
+        // Only cashiers can create sales. Admins retain read-only transaction
+        // access (receipts, status updates and CSV export).
+        $actor = Auth::requireRole(['counter-staff']);
         $body = Http::body();
 
         $transactionId = trim((string) ($body['transaction_id'] ?? ''));
         if ($transactionId !== '') {
-            $prior = Database::fetchOne('SELECT id FROM sales WHERE transaction_id = ? LIMIT 1', [$transactionId]);
+            $prior = Database::fetchOne(
+                'SELECT id FROM ' . Schema::t('orders') . '
+                 WHERE source = "sales" AND transaction_id = ? LIMIT 1',
+                [$transactionId],
+            );
             if ($prior) {
                 $state = StateRepository::snapshot($actor);
                 Http::json(['state' => $state, 'sale' => self::findSale($state, (int) $prior['id'])]);
@@ -150,23 +157,27 @@ final class SalesController
             $transaction = $transactionId !== '' ? $transactionId : 'TXN-' . bin2hex(random_bytes(8));
 
             Database::execute(
-                'INSERT INTO sales
-                    (receipt_no, customer, customer_id, order_type, subtotal, discount, total, payment_method,
-                     amount_tendered, change_due, status, cashier, staff_id, transaction_id, sale_date)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE())',
+                'INSERT INTO ' . Schema::t('orders') . '
+                    (order_no, order_type, status, source, legacy_order_type, legacy_status,
+                     customer, customer_id, subtotal, discount, total, payment_method,
+                     amount_tendered, change_due, cashier, user_id, staff_code,
+                     transaction_id, order_date)
+                 VALUES (?, ?, ?, "sales", ?, "Paid", ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE())',
                 [
                     $receiptNo,
+                    $orderType === 'Online' ? 'online' : 'pos',
+                    'completed',
+                    $orderType,
                     $customer,
                     $customerId !== '' ? $customerId : null,
-                    $orderType,
                     $subtotal,
                     $discount,
                     $total,
                     $paymentMethod,
                     $tendered,
                     round($tendered - $total, 2),
-                    'Paid',
                     $actor['name'],
+                    (int) $actor['id'],
                     $actor['code'],
                     $transaction,
                 ],
@@ -175,8 +186,8 @@ final class SalesController
 
             foreach ($priced as $line) {
                 Database::execute(
-                    'INSERT INTO sale_items
-                        (sale_id, product_id, variant_key, product_name, category, unit, quantity, price, total)
+                    'INSERT INTO ' . Schema::t('order_items') . '
+                        (order_id, product_id, variant_key, product_name, category, unit, quantity, price, total)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
                     [
                         $saleId,
@@ -193,7 +204,10 @@ final class SalesController
 
                 $next = $line['next'];
                 Inventory::setStock($line['product_id'], $line['deduct_variant'], $next);
-                Database::execute('UPDATE products SET awaiting_stock = 0 WHERE id = ?', [$line['product_id']]);
+                Database::execute(
+                    'UPDATE ' . Schema::t('products') . ' SET awaiting_stock = 0 WHERE id = ?',
+                    [$line['product_id']],
+                );
 
                 $remarks = "{$customer} · {$orderType} · {$paymentMethod} sale";
                 if ($line['deduct_variant'] !== $line['variant']) {
@@ -207,12 +221,13 @@ final class SalesController
                     $line['deduct_variant'],
                     $line['product'],
                     $line['deduct_unit'],
-                    'Stock Out',
+                    'Sale',
                     $line['deduct_quantity'],
                     $line['stock'],
                     $next,
                     $remarks,
                     $actor,
+                    ['customer' => $customer, 'reason' => $orderType],
                 );
             }
 
@@ -231,7 +246,8 @@ final class SalesController
 
     public static function hold(): never
     {
-        $actor = Auth::requireRole(['admin', 'cashier']);
+        // Held orders are a POS feature and stay cashier-only.
+        $actor = Auth::requireRole(['counter-staff']);
         $body = Http::body();
         $items = $body['items'] ?? [];
         if (!is_array($items) || !$items) {
@@ -281,17 +297,52 @@ final class SalesController
         $tendered = Validator::optionalText($body['amount_tendered'] ?? '', 'Amount tendered', 40);
         $holdNo = Inventory::nextHoldNumber();
 
-        Database::execute(
-            'INSERT INTO held_orders (hold_no, items_json, discount, payment_method, order_type, amount_tendered, cashier, hold_date)
-             VALUES (?, ?, ?, ?, ?, ?, ?, CURDATE())',
-            [$holdNo, json_encode($clean, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), $discount, $paymentMethod, $orderType, $tendered, $actor['code']],
-        );
+        $orderId = 0;
+        Database::transaction(function () use ($holdNo, $clean, $discount, $paymentMethod, $orderType, $tendered, $actor, &$orderId): void {
+            Database::execute(
+                'INSERT INTO ' . Schema::t('orders') . '
+                    (order_no, order_type, status, source, legacy_order_type, customer,
+                     discount, payment_method, amount_tendered, cashier, user_id, staff_code,
+                     order_date, hold_date)
+                 VALUES (?, ?, "held", "held_orders", ?, "Walk-in Customer", ?, ?, ?, ?, ?, ?, CURDATE(), CURDATE())',
+                [
+                    $holdNo,
+                    $orderType === 'Online' ? 'online' : 'pos',
+                    $orderType,
+                    $discount,
+                    $paymentMethod,
+                    $tendered,
+                    $actor['name'],
+                    (int) $actor['id'],
+                    $actor['code'],
+                ],
+            );
+            $orderId = Database::lastId();
 
-        $id = Database::lastId();
+            foreach ($clean as $item) {
+                Database::execute(
+                    'INSERT INTO ' . Schema::t('order_items') . '
+                        (order_id, product_id, variant_key, product_name, category, unit, quantity, price, total)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    [
+                        $orderId,
+                        $item['id'],
+                        $item['variant'],
+                        $item['name'],
+                        $item['category'],
+                        $item['unit'],
+                        $item['qty'],
+                        $item['price'],
+                        round($item['qty'] * $item['price'], 2),
+                    ],
+                );
+            }
+        });
+
         $state = StateRepository::snapshot($actor);
         $held = null;
         foreach ($state['heldOrders'] as $order) {
-            if ((int) $order['id'] === $id) {
+            if ((int) $order['id'] === $orderId) {
                 $held = $order;
                 break;
             }
@@ -302,30 +353,36 @@ final class SalesController
 
     public static function setStatus(int $id): never
     {
-        $actor = Auth::requireRole(['admin', 'cashier']);
+        $actor = Auth::requireRole(['admin', 'counter-staff']);
         $body = Http::body();
         $status = trim((string) ($body['status'] ?? ''));
 
         $stored = [
-            'Completed' => 'Paid',
-            'Paid' => 'Paid',
-            'Pending' => 'Pending',
-            'Refunded' => 'Refunded',
-            'Void' => 'Void',
+            'Completed' => 'completed',
+            'Paid' => 'completed',
+            'Pending' => 'pending',
+            'Refunded' => 'refunded',
+            'Void' => 'void',
         ];
         if (!isset($stored[$status])) {
             throw new HttpException('Choose a valid sale status.', 422, 'VALIDATION');
         }
 
-        $sale = Database::fetchOne('SELECT * FROM sales WHERE id = ? LIMIT 1', [$id]);
+        $sale = Database::fetchOne(
+            'SELECT * FROM ' . Schema::t('orders') . ' WHERE source = "sales" AND id = ? LIMIT 1',
+            [$id],
+        );
         if (!$sale) {
             throw new HttpException('That sale no longer exists.', 404, 'NOT_FOUND');
         }
-        if ($actor['role'] !== 'admin' && (string) $sale['staff_id'] !== (string) $actor['code']) {
+        if ($actor['role'] !== 'admin' && (string) $sale['staff_code'] !== (string) $actor['code']) {
             throw new HttpException('You can only update your own sales.', 403, 'FORBIDDEN');
         }
 
-        Database::execute('UPDATE sales SET status = ? WHERE id = ?', [$stored[$status], $id]);
+        Database::execute(
+            'UPDATE ' . Schema::t('orders') . ' SET status = ? WHERE id = ?',
+            [$stored[$status], $id],
+        );
         Auth::businessAudit('Sale Status Updated', "{$sale['receipt_no']} marked {$status}", $actor);
 
         Http::json(['state' => StateRepository::snapshot($actor)]);
@@ -333,8 +390,11 @@ final class SalesController
 
     public static function removeHeld(int $id): never
     {
-        $actor = Auth::requireRole(['admin', 'cashier']);
-        Database::execute('DELETE FROM held_orders WHERE id = ?', [$id]);
+        $actor = Auth::requireRole(['admin', 'counter-staff']);
+        Database::execute(
+            'DELETE FROM ' . Schema::t('orders') . ' WHERE id = ? AND status = "held"',
+            [$id],
+        );
         Http::json(['state' => StateRepository::snapshot($actor)]);
     }
 

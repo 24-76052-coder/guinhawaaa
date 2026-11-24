@@ -8,6 +8,7 @@ use Guinhawa\Auth;
 use Guinhawa\Database;
 use Guinhawa\Http;
 use Guinhawa\HttpException;
+use Guinhawa\Schema;
 use Guinhawa\StateRepository;
 use Guinhawa\Validator;
 
@@ -21,12 +22,12 @@ final class AttendanceController
         $name = self::resolveName($actor, $code, $body['name'] ?? '');
 
         $existing = Database::fetchOne(
-            'SELECT id FROM attendance WHERE employee_code = ? AND work_date = CURDATE() LIMIT 1',
+            'SELECT id FROM ' . Schema::t('attendance') . ' WHERE employee_code = ? AND work_date = CURDATE() LIMIT 1',
             [$code],
         );
         if (!$existing) {
             Database::execute(
-                "INSERT INTO attendance (employee_code, employee_name, work_date, clock_in, hours, status)
+                "INSERT INTO " . Schema::t('attendance') . " (employee_code, employee_name, work_date, clock_in, hours, status)
                  VALUES (?, ?, CURDATE(), CURTIME(), 0, IF(CURTIME() > '08:00:00', 'Late', 'Present'))",
                 [$code, $name],
             );
@@ -43,7 +44,7 @@ final class AttendanceController
         $code = self::resolveCode($actor, $body['code'] ?? '');
 
         $row = Database::fetchOne(
-            'SELECT * FROM attendance WHERE employee_code = ? AND work_date = CURDATE() LIMIT 1',
+            'SELECT * FROM ' . Schema::t('attendance') . ' WHERE employee_code = ? AND work_date = CURDATE() LIMIT 1',
             [$code],
         );
         if (!$row) {
@@ -54,7 +55,7 @@ final class AttendanceController
             $minutes = max(0, (int) round((time() - strtotime(date('Y-m-d') . ' ' . $row['clock_in'])) / 60));
             $hours = round($minutes / 60, 1);
             Database::execute(
-                'UPDATE attendance SET clock_out = CURTIME(), hours = ? WHERE id = ?',
+                'UPDATE ' . Schema::t('attendance') . ' SET clock_out = CURTIME(), hours = ? WHERE id = ?',
                 [$hours, (int) $row['id']],
             );
             Auth::businessAudit('Attendance Clock Out', "{$row['employee_name']} ({$code}) clocked out", $actor);
@@ -87,7 +88,7 @@ final class AttendanceController
         }
 
         $employee = Database::fetchOne(
-            'SELECT full_name FROM employees WHERE employee_id = ? LIMIT 1',
+            'SELECT full_name FROM ' . Schema::t('users') . ' WHERE employee_code = ? LIMIT 1',
             [$code],
         );
         if ($employee) {
@@ -99,13 +100,16 @@ final class AttendanceController
         $hours = 0.0;
 
         $existing = Database::fetchOne(
-            'SELECT id FROM attendance WHERE employee_code = ? AND work_date = ? LIMIT 1',
+            'SELECT id FROM ' . Schema::t('attendance') . ' WHERE employee_code = ? AND work_date = ? LIMIT 1',
             [$code, $date],
         );
 
         if ($status === 'Not recorded') {
             if ($existing) {
-                Database::execute('DELETE FROM attendance WHERE id = ?', [(int) $existing['id']]);
+                Database::execute(
+                    'DELETE FROM ' . Schema::t('attendance') . ' WHERE id = ?',
+                    [(int) $existing['id']],
+                );
                 Auth::businessAudit('Attendance Cleared', "{$name} ({$code}) on {$date}", $actor);
             }
             Http::json(['state' => StateRepository::snapshot($actor)]);
@@ -129,13 +133,13 @@ final class AttendanceController
 
         if ($existing) {
             Database::execute(
-                'UPDATE attendance SET employee_name = ?, clock_in = ?, clock_out = ?, hours = ?, status = ?, note = ?
+                'UPDATE ' . Schema::t('attendance') . ' SET employee_name = ?, clock_in = ?, clock_out = ?, hours = ?, status = ?, note = ?
                  WHERE id = ?',
                 [$name, $timeIn, $timeOut, $hours, $status, $note, (int) $existing['id']],
             );
         } else {
             Database::execute(
-                'INSERT INTO attendance (employee_code, employee_name, work_date, clock_in, clock_out, hours, status, note)
+                'INSERT INTO ' . Schema::t('attendance') . ' (employee_code, employee_name, work_date, clock_in, clock_out, hours, status, note)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
                 [$code, $name, $date, $timeIn, $timeOut, $hours, $status, $note],
             );
@@ -176,7 +180,7 @@ final class AttendanceController
         }
 
         $employee = Database::fetchOne(
-            "SELECT full_name FROM employees WHERE employee_id = ? AND status = 'active' LIMIT 1",
+            "SELECT full_name FROM " . Schema::t('users') . " WHERE employee_code = ? AND status = 'active' LIMIT 1",
             [$code],
         );
         if ($employee) {

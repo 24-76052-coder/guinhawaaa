@@ -1,9 +1,11 @@
 <?php
 /**
- * Add optional, verified Gmail support for staff accounts.
+ * Add optional, verified personal-email support for staff accounts.
  *
  * Run from the command line. This migration is additive and preserves every
- * existing staff row and email address. Existing addresses start unverified.
+ * existing staff row and email address. Admin-entered addresses are backfilled
+ * as verified by `migrate_account_email_verification.php`; only addresses a
+ * staff member changes themselves require a confirmation code.
  */
 
 declare(strict_types=1);
@@ -36,7 +38,7 @@ if (!staffEmailColumnExists()) {
     Database::execute(
         'ALTER TABLE employees ADD COLUMN email_verified TINYINT(1) NOT NULL DEFAULT 0 AFTER email',
     );
-    echo "[ok] employees.email_verified added; existing addresses remain unverified\n";
+    echo "[ok] employees.email_verified added; existing addresses are backfilled by migrate_account_email_verification.php\n";
 } else {
     echo "[skip] employees.email_verified already exists\n";
 }

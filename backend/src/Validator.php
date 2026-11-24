@@ -65,15 +65,6 @@ final class Validator
         return $clean;
     }
 
-    public static function gmail(mixed $value, bool $required = false): ?string
-    {
-        $email = self::email($value, $required);
-        if ($email !== null && !preg_match('/^[^@]+@gmail\.com$/i', $email)) {
-            throw new HttpException('Enter a Gmail address ending in @gmail.com.', 422, 'VALIDATION');
-        }
-        return $email;
-    }
-
     public static function contact(mixed $value): ?string
     {
         $clean = self::optionalText($value, 'Contact number', 40);

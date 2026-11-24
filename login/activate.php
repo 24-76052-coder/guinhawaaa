@@ -231,7 +231,7 @@ $safeToken = htmlspecialchars($token, ENT_QUOTES, 'UTF-8');
   </main>
 
   <?php if ($state === 'valid'): ?>
-    <script src="../shared/js/store.js" defer></script>
+    <script src="../shared/js/store.js?v=cleanup-20261122-2" defer></script>
     <script src="js/activate.js" defer></script>
   <?php endif; ?>
 </body>

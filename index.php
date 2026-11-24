@@ -18,7 +18,7 @@ use Guinhawa\Web;
 Web::boot($config);
 
 if (!AccountService::adminExists()) {
-    Web::go(Web::url('auth/setup.php'));
+    Web::setupRequired();
 }
 
 $user = Auth::user();

@@ -346,7 +346,7 @@
     var isValid = true;
 
     if (!username.value.trim()) {
-      setFieldError(username, "Enter your username or employee ID.");
+      setFieldError(username, "Enter your email or username.");
       isValid = false;
     } else {
       setFieldError(username, "");
@@ -403,7 +403,7 @@
     submitButton.disabled = true;
     submitButton.setAttribute("aria-busy", "true");
 
-    if (buttonLabel) buttonLabel.textContent = "Signing in";
+    if (buttonLabel) buttonLabel.textContent = "Signing in…";
 
     window.setTimeout(function () {
       var pending =
@@ -455,7 +455,7 @@
           "admin/stock-in.php", "admin/stock-out.php", "admin/suppliers.php",
           "admin/transactions.php", "admin/attendance.php", "admin/history.php",
           "admin/accounts.php", "admin/reports.php", "admin/settings.php",
-          "inventory/index.php", "cashier/index.php",
+          "inventory/index.php",
         ],
         "Inventory Staff": [
           "inventory/index.php", "inventory/products.php", "inventory/inventory.php",

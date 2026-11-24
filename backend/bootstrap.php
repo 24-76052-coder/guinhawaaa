@@ -19,4 +19,5 @@ spl_autoload_register(static function (string $class): void {
 });
 
 \Guinhawa\Database::configure($config['db']);
+\Guinhawa\Schema::configure($config);
 \Guinhawa\Auth::boot($config['session']);

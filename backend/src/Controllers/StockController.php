@@ -9,6 +9,7 @@ use Guinhawa\Database;
 use Guinhawa\Http;
 use Guinhawa\HttpException;
 use Guinhawa\Inventory;
+use Guinhawa\Schema;
 use Guinhawa\StateRepository;
 use Guinhawa\Validator;
 
@@ -70,7 +71,7 @@ final class StockController
             if ($reference === '') {
                 $reference = Inventory::nextReference($prefix);
             } else {
-                $duplicate = Database::fetchOne('SELECT id FROM inventory_history WHERE reference = ? LIMIT 1', [$reference]);
+                $duplicate = Database::fetchOne('SELECT id FROM ' . Schema::t('inventory_transactions') . ' WHERE reference = ? LIMIT 1', [$reference]);
                 if ($duplicate) {
                     throw new HttpException('That stock movement reference has already been recorded.', 409, 'CONFLICT');
                 }
@@ -86,7 +87,7 @@ final class StockController
             ], static fn ($part) => $part !== '');
             $movementRemarks = implode(' · ', $parts);
 
-            $historyId = Inventory::recordMovement(
+            Inventory::recordMovement(
                 $reference,
                 $productId,
                 $variantKey,
@@ -98,14 +99,7 @@ final class StockController
                 $next,
                 $movementRemarks,
                 $actor,
-            );
-
-            Database::execute(
-                'INSERT INTO stock_out
-                    (history_id, reference, product_id, variant_key, product_name, unit, quantity,
-                     previous_stock, new_stock, customer, reason, remarks, user_label, issued_date)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE())',
-                [$historyId, $reference, $productId, $variantKey, $product['name'], $variant['unit'], $quantity, $previous, $next, $customer, $reason, $remarks, $actor['name']],
+                ['customer' => $customer, 'reason' => $reason],
             );
 
             Auth::businessAudit(
@@ -146,7 +140,10 @@ final class StockController
             $supplierId = null;
             $resolvedSupplier = $supplierName;
             if ($supplierCode !== '') {
-                $supplier = Database::fetchOne('SELECT id, name FROM suppliers WHERE code = ? LIMIT 1', [$supplierCode]);
+                $supplier = Database::fetchOne(
+                    'SELECT id, name FROM ' . Schema::t('suppliers') . ' WHERE code = ? LIMIT 1',
+                    [$supplierCode],
+                );
                 if (!$supplier) {
                     throw new HttpException('That supplier no longer exists.', 404, 'NOT_FOUND');
                 }
@@ -157,7 +154,7 @@ final class StockController
             if ($reference === '') {
                 $reference = Inventory::nextReference('SI');
             } else {
-                $duplicate = Database::fetchOne('SELECT id FROM inventory_history WHERE reference = ? LIMIT 1', [$reference]);
+                $duplicate = Database::fetchOne('SELECT id FROM ' . Schema::t('inventory_transactions') . ' WHERE reference = ? LIMIT 1', [$reference]);
                 if ($duplicate) {
                     throw new HttpException('That stock movement reference has already been recorded.', 409, 'CONFLICT');
                 }
@@ -166,11 +163,14 @@ final class StockController
             $previous = (float) $variant['stock'];
             $next = $previous + $quantity;
             Inventory::setStock($productId, $variantKey, $next);
-            Database::execute('UPDATE products SET awaiting_stock = 0 WHERE id = ?', [$productId]);
+            Database::execute(
+                'UPDATE ' . Schema::t('products') . ' SET awaiting_stock = 0 WHERE id = ?',
+                [$productId],
+            );
 
             $movementRemarks = $remarks !== '' ? $remarks : ($resolvedSupplier !== '' ? $resolvedSupplier : 'Stock received');
 
-            $historyId = Inventory::recordMovement(
+            Inventory::recordMovement(
                 $reference,
                 $productId,
                 $variantKey,
@@ -182,28 +182,10 @@ final class StockController
                 $next,
                 $movementRemarks,
                 $actor,
-            );
-
-            Database::execute(
-                'INSERT INTO stock_in
-                    (history_id, reference, product_id, variant_key, product_name, unit, quantity,
-                     previous_stock, new_stock, supplier_id, supplier_name, remarks, user_label, is_delivery, received_date)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE())',
                 [
-                    $historyId,
-                    $reference,
-                    $productId,
-                    $variantKey,
-                    $product['name'],
-                    $variant['unit'],
-                    $quantity,
-                    $previous,
-                    $next,
-                    $supplierId,
-                    $resolvedSupplier,
-                    $remarks,
-                    $actor['name'],
-                    $isDelivery ? 1 : 0,
+                    'supplier_id' => $supplierId,
+                    'supplier_name' => $resolvedSupplier,
+                    'is_delivery' => $isDelivery,
                 ],
             );
 

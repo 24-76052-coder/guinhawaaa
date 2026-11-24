@@ -5,14 +5,15 @@ declare(strict_types=1);
 namespace Guinhawa\Controllers;
 
 use Guinhawa\AccountService;
+use Guinhawa\AccountEmailVerificationService;
 use Guinhawa\Auth;
 use Guinhawa\Database;
 use Guinhawa\Http;
 use Guinhawa\HttpException;
 use Guinhawa\LoginService;
 use Guinhawa\RecoveryService;
+use Guinhawa\Schema;
 use Guinhawa\StaffActivationService;
-use Guinhawa\StaffEmailVerificationService;
 use Guinhawa\StaffRecoveryService;
 use Guinhawa\Users;
 use Guinhawa\Validator;
@@ -80,7 +81,7 @@ final class AuthController
     {
         $user = Auth::requireUser(true);
         $body = Http::body();
-        $table = $user['type'] === 'admin' ? 'admin' : 'employees';
+        $table = Schema::t('users');
         $id = (int) $user['id'];
 
         $fields = [];
@@ -92,12 +93,11 @@ final class AuthController
         }
 
         if (array_key_exists('email', $body)) {
-            if ($table === 'employees') {
-                throw new HttpException('Use Gmail verification in your profile to add or change a staff Gmail address.', 422, 'VERIFICATION_REQUIRED');
-            }
-            $email = Validator::email($body['email']);
-            $fields[] = 'email = ?';
-            $params[] = $email;
+            throw new HttpException(
+                'Add or change your personal email from the Personal email section and verify it before it is saved.',
+                422,
+                'VERIFICATION_REQUIRED',
+            );
         }
 
         if (array_key_exists('contactNumber', $body)) {
@@ -124,31 +124,31 @@ final class AuthController
         Auth::audit($user, 'Profile Updated', "{$user['name']} ({$user['employeeId']}) updated their profile.");
 
         $fresh = Database::fetchOne("SELECT * FROM {$table} WHERE id = ? LIMIT 1", [$id]);
-        $mapped = $user['type'] === 'admin' ? Users::mapAdmin($fresh) : Users::mapEmployee($fresh);
+        $mapped = Users::mapUser($fresh);
 
         Http::json(['user' => $mapped, 'csrfToken' => Auth::csrfToken()]);
     }
 
-    public static function staffEmailVerificationStatus(): never
+    public static function accountEmailVerificationStatus(): never
     {
         $user = Auth::requireUser(true);
-        Http::json(['verification' => StaffEmailVerificationService::status($user)]);
+        Http::json(['verification' => AccountEmailVerificationService::status($user)]);
     }
 
-    public static function requestStaffEmailVerification(): never
+    public static function requestAccountEmailVerification(): never
     {
         $user = Auth::requireUser(true);
         $body = Http::body();
         Http::json([
-            'result' => StaffEmailVerificationService::requestCode($user, $body['email'] ?? ''),
+            'result' => AccountEmailVerificationService::requestCode($user, $body['email'] ?? ''),
         ]);
     }
 
-    public static function verifyStaffEmail(): never
+    public static function verifyAccountEmail(): never
     {
         $user = Auth::requireUser(true);
         $body = Http::body();
-        $result = StaffEmailVerificationService::verifyCode($user, $body['code'] ?? '');
+        $result = AccountEmailVerificationService::verifyCode($user, $body['code'] ?? '');
         Http::json([
             'user' => $result['user'],
             'verification' => $result['verification'],
@@ -176,8 +176,9 @@ final class AuthController
     public static function requestPasswordOtp(): never
     {
         $body = Http::body();
+        $email = (string) ($body['email'] ?? ($body['identifier'] ?? ''));
         $result = RecoveryService::requestOtp(
-            (string) ($body['email'] ?? ''),
+            $email,
             (string) ($_SERVER['REMOTE_ADDR'] ?? ''),
         );
 

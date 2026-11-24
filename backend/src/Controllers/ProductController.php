@@ -9,6 +9,7 @@ use Guinhawa\Database;
 use Guinhawa\Http;
 use Guinhawa\HttpException;
 use Guinhawa\Inventory;
+use Guinhawa\Schema;
 use Guinhawa\StateRepository;
 use Guinhawa\Validator;
 
@@ -34,7 +35,7 @@ final class ProductController
         $image = Validator::imageReference($body['image'] ?? '', 'Product image');
 
         $productId = Database::transaction(function () use ($actor, $body, $name, $category, $variants, $minimum, $cost, $sackWeight, $image): int {
-            $nextIdRow = Database::fetchOne('SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM products');
+            $nextIdRow = Database::fetchOne('SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM ' . Schema::t('products'));
             $nextId = (int) $nextIdRow['next_id'];
             $sku = Validator::optionalText($body['sku'] ?? '', 'SKU', 40);
             if ($sku === '') {
@@ -45,7 +46,7 @@ final class ProductController
             $total = array_sum(array_column($variants, 'stock'));
 
             Database::execute(
-                'INSERT INTO products
+                'INSERT INTO ' . Schema::t('products') . '
                     (sku, barcode, name, category, subcategory, brand, description, minimum, cost, sack_weight_kg,
                      expiration_date, supplier, image, review, notes, source, sheet_row, awaiting_stock)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -78,7 +79,7 @@ final class ProductController
                 Inventory::setStock($productId, $variant['key'], $variant['stock']);
                 if ($variant['stock'] > 0) {
                     $reference = Inventory::nextReference('SI');
-                    $historyId = Inventory::recordMovement(
+                    Inventory::recordMovement(
                         $reference,
                         $productId,
                         $variant['key'],
@@ -91,13 +92,6 @@ final class ProductController
                         'Initial product stock',
                         $actor,
                     );
-                    Database::execute(
-                        'INSERT INTO stock_in
-                            (history_id, reference, product_id, variant_key, product_name, unit, quantity,
-                             previous_stock, new_stock, remarks, user_label, received_date)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, CURDATE())',
-                        [$historyId, $reference, $productId, $variant['key'], $name, $variant['unit'], $variant['stock'], $variant['stock'], 'Initial product stock', $actor['name']],
-                    );
                 }
             }
 
@@ -105,7 +99,7 @@ final class ProductController
             return $productId;
         });
 
-        $product = Database::fetchOne('SELECT * FROM products WHERE id = ? LIMIT 1', [$productId]);
+        $product = Database::fetchOne('SELECT * FROM ' . Schema::t('products') . ' WHERE id = ? LIMIT 1', [$productId]);
         Http::json([
             'state' => StateRepository::snapshot($actor),
             'product' => $product,
@@ -217,7 +211,7 @@ final class ProductController
             }
 
             $params[] = $id;
-            Database::execute('UPDATE products SET ' . implode(', ', $fields) . ' WHERE id = ?', $params);
+            Database::execute('UPDATE ' . Schema::t('products') . ' SET ' . implode(', ', $fields) . ' WHERE id = ?', $params);
 
             $kept = [];
             foreach ($variants as $variant) {
@@ -227,7 +221,7 @@ final class ProductController
 
                 if ($before) {
                     Database::execute(
-                        'UPDATE product_variants
+                        'UPDATE ' . Schema::t('product_variants') . '
                          SET label = ?, unit = ?, unit_raw = ?, price = ?, minimum = ?, assumed = ?, unit_verified = ?
                          WHERE product_id = ? AND variant_key = ?',
                         [
@@ -267,7 +261,7 @@ final class ProductController
             foreach ($existingVariants as $key => $old) {
                 if (!in_array($key, $kept, true)) {
                     Database::execute(
-                        'DELETE FROM product_variants WHERE product_id = ? AND variant_key = ?',
+                        'DELETE FROM ' . Schema::t('product_variants') . ' WHERE product_id = ? AND variant_key = ?',
                         [$id, $key],
                     );
                 }
@@ -280,7 +274,7 @@ final class ProductController
             );
         });
 
-        $fresh = Database::fetchOne('SELECT * FROM products WHERE id = ? LIMIT 1', [$id]);
+        $fresh = Database::fetchOne('SELECT * FROM ' . Schema::t('products') . ' WHERE id = ? LIMIT 1', [$id]);
         Http::json(['state' => StateRepository::snapshot($actor), 'product' => $fresh]);
     }
 
@@ -291,13 +285,13 @@ final class ProductController
 
         if ((int) $product['archived'] === 0) {
             Database::execute(
-                "UPDATE products SET archived = 1, archived_at = NOW(), archived_reason = 'Removed from the active catalogue' WHERE id = ?",
+                "UPDATE " . Schema::t('products') . " SET archived = 1, archived_at = NOW(), archived_reason = 'Removed from the active catalogue' WHERE id = ?",
                 [$id],
             );
             Auth::businessAudit('Product Archived', "{$product['name']} archived (history preserved)", $actor);
         }
 
-        $archived = Database::fetchOne('SELECT * FROM products WHERE id = ? LIMIT 1', [$id]);
+        $archived = Database::fetchOne('SELECT * FROM ' . Schema::t('products') . ' WHERE id = ? LIMIT 1', [$id]);
         Http::json(['state' => StateRepository::snapshot($actor), 'product' => $archived]);
     }
 
@@ -307,7 +301,7 @@ final class ProductController
         $product = Inventory::product($id);
 
         Database::execute(
-            'UPDATE products SET archived = 0, archived_at = NULL, archived_reason = NULL WHERE id = ?',
+            'UPDATE ' . Schema::t('products') . ' SET archived = 0, archived_at = NULL, archived_reason = NULL WHERE id = ?',
             [$id],
         );
         Auth::businessAudit('Product Restored', "{$product['name']} restored to the catalogue", $actor);
@@ -318,9 +312,8 @@ final class ProductController
     private static function variantsOf(int $productId): array
     {
         $rows = Database::fetchAll(
-            'SELECT v.*, COALESCE(i.quantity, 0) AS stock
-             FROM product_variants v
-             LEFT JOIN inventory i ON i.product_id = v.product_id AND i.variant_key = v.variant_key
+            'SELECT v.*, v.quantity AS stock
+             FROM ' . Schema::t('product_variants') . ' v
              WHERE v.product_id = ? ORDER BY v.variant_key ASC',
             [$productId],
         );
@@ -430,7 +423,7 @@ final class ProductController
     private static function insertVariant(int $productId, array $variant): void
     {
         Database::execute(
-            'INSERT INTO product_variants
+            'INSERT INTO ' . Schema::t('product_variants') . '
                 (product_id, variant_key, label, unit, unit_raw, price, minimum, assumed, unit_verified)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
             [
@@ -449,7 +442,7 @@ final class ProductController
 
     private static function assertUniqueIdentifiers(string $sku, string $barcode, ?int $ignoreId = null): void
     {
-        $sql = 'SELECT id, sku, barcode FROM products WHERE ';
+        $sql = 'SELECT id, sku, barcode FROM ' . Schema::t('products') . ' WHERE ';
         $params = [];
         if ($ignoreId !== null) {
             $sql .= 'id <> ? AND ';

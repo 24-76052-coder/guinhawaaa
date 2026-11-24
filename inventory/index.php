@@ -8,7 +8,7 @@
   <meta name="description" content="Guinhawa Poultry Supply inventory staff dashboard.">
   <title>Inventory Dashboard &middot; Guinhawa Admin</title>
 
-  <script src="/guinhawa_system/shared/js/theme-init.js"></script>
+  <script src="/guinhawa_system/shared/js/theme-init.js?v=cleanup-20261122-2"></script>
   <link rel="icon" type="image/png" href="/guinhawa_system/assets/images/guinhawa-logo.png">
   <link rel="stylesheet" href="/guinhawa_system/shared/bootstrap5/css/bootstrap.min.css">
   <link rel="stylesheet" href="/guinhawa_system/shared/bootstrap-icons/bootstrap-icons.min.css">
@@ -41,10 +41,10 @@
             <span class="hero-clock__hint"><span class="hero-clock__dot" aria-hidden="true"></span> Live local time</span>
           </div>
           <div class="hero__actions">
-            <a class="btn-light-app" href="stock-in.php">
+            <a class="btn-light-app" href="inventory.php?panel=in">
               <i class="bi bi-box-arrow-in-down" aria-hidden="true"></i> Stock in
             </a>
-            <a class="btn-ghost-app" href="stock-out.php">
+            <a class="btn-ghost-app" href="inventory.php?panel=out">
               <i class="bi bi-box-arrow-up" aria-hidden="true"></i> Stock out
             </a>
           </div>
@@ -112,7 +112,7 @@
                 <h2 class="panel__title"><i class="bi bi-clock-history" aria-hidden="true"></i> Recent stock activities</h2>
                 <p class="panel__sub">Deliveries, releases, and sales written to the ledger</p>
               </div>
-              <a class="panel-link" href="history.php">Full history <i class="bi bi-arrow-right"></i></a>
+              <a class="panel-link" href="inventory.php?tab=history">Full history <i class="bi bi-arrow-right"></i></a>
             </div>
             <div class="panel__body panel__body--flush">
               <div class="table-responsive">
@@ -135,31 +135,6 @@
         </div>
         <div class="col-12 col-xl-4">
           <div class="panel-stack">
-            <section class="panel">
-              <div class="panel__header">
-                <div>
-                  <h2 class="panel__title"><i class="bi bi-lightning-charge" aria-hidden="true"></i> Quick actions</h2>
-                  <p class="panel__sub">Common stock tasks</p>
-                </div>
-              </div>
-              <div class="panel__body">
-                <div class="quick-move">
-                  <a class="quick-action" href="stock-in.php"><i class="bi bi-box-arrow-in-down" aria-hidden="true"></i> Stock in</a>
-                  <a class="quick-action" href="stock-out.php"><i class="bi bi-box-arrow-up" aria-hidden="true"></i> Stock out</a>
-                </div>
-                <a class="btn btn-outline-app w-100 mt-3" href="inventory.php">
-                  <i class="bi bi-archive" aria-hidden="true"></i> Open full inventory
-                </a>
-                <a class="btn btn-outline-app w-100 mt-2" href="attendance.php">
-                  <i class="bi bi-calendar2-check" aria-hidden="true"></i> My attendance
-                </a>
-                <div class="dash-note mt-3">
-                  <i class="bi bi-info-circle" aria-hidden="true"></i>
-                  <div>Feeds are sold and tracked by kilogram. Use decimal quantities when recording partial sacks.</div>
-                </div>
-              </div>
-            </section>
-
             <section class="panel">
               <div class="panel__header">
                 <div>
@@ -215,9 +190,9 @@
   <div class="toast-container" id="toastContainer"></div>
 
   <script src="/guinhawa_system/shared/bootstrap5/js/bootstrap.bundle.min.js" defer></script>
-  <script src="/guinhawa_system/shared/js/store.js" defer></script>
-  <script src="/guinhawa_system/shared/js/charts.js" defer></script>
-  <script src="/guinhawa_system/shared/js/app.js" defer></script>
-  <script src="/guinhawa_system/shared/js/inventory-dashboard.js" defer></script>
+  <script src="/guinhawa_system/shared/js/store.js?v=cleanup-20261122-2" defer></script>
+  <script src="/guinhawa_system/shared/js/charts.js?v=cleanup-20261122-2" defer></script>
+  <script src="/guinhawa_system/shared/js/app.js?v=cleanup-20261122-2" defer></script>
+  <script src="/guinhawa_system/shared/js/inventory-dashboard.js?v=cleanup-20261122-2" defer></script>
 </body>
 </html>

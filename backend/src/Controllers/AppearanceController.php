@@ -8,19 +8,17 @@ use Guinhawa\Auth;
 use Guinhawa\Database;
 use Guinhawa\Http;
 use Guinhawa\HttpException;
+use Guinhawa\Schema;
 
 /**
  * Per-account appearance preferences.
  *
- * The application has two account tables (`admin` and `employees`), so the
- * preference row is keyed by the pair (user_type, user_id). The unique key
- * keeps exactly one row per account and every write is scoped to the
- * authenticated user; one account can never read or overwrite another's row.
+ * Preferences live in `users.preferences` as JSON, keyed by the single unified
+ * user id. Every read and write is scoped to the authenticated account, so one
+ * account can never read or overwrite another's settings.
  *
- * The selected colour combination and layout options are stored as JSON in
- * `preferences`. The original one-column-per-option fields are still mirrored
- * so older code and databases keep working, and rows written before the JSON
- * column existed are mapped onto the new shape when they are read.
+ * Rows saved before the compact migration are mapped onto the new shape by the
+ * importer; legacy theme identifiers remain accepted by the sanitizer.
  *
  * This controller intentionally does not accept custom colours: the interface
  * offers a fixed library of professionally paired combinations, so there is
@@ -57,7 +55,7 @@ final class AppearanceController
         'background' => ['solid', 'gradient'],
     ];
 
-    /** Mirrors shared/js/theme-init.js. Keep the two lists in sync. */
+    /** Mirrors shared/js/theme-init.js?v=cleanup-20261122-2. Keep the two lists in sync. */
     private const THEMES = [
         'forest', 'emerald', 'sage', 'olive', 'mint', 'jade', 'deep', 'tropical',
         'ocean', 'midnight', 'arctic', 'royal-blue', 'sky', 'teal',
@@ -126,43 +124,6 @@ final class AppearanceController
         'sand' => 'desert',
     ];
 
-    /**
-     * Legacy `accent_color` is an ENUM('forest','fresh','deep','olive'), so
-     * the mirror column has to stay inside those four values.
-     */
-    private const LEGACY_COLUMN = [
-        'forest' => 'forest',
-        'emerald' => 'forest',
-        'sage' => 'forest',
-        'olive' => 'olive',
-        'mint' => 'fresh',
-        'jade' => 'fresh',
-        'deep' => 'deep',
-        'tropical' => 'fresh',
-        'ocean' => 'deep',
-        'midnight' => 'deep',
-        'arctic' => 'fresh',
-        'royal-blue' => 'deep',
-        'sky' => 'fresh',
-        'teal' => 'deep',
-        'royal-purple' => 'deep',
-        'lavender' => 'deep',
-        'violet' => 'deep',
-        'rose' => 'deep',
-        'cherry' => 'deep',
-        'orchid' => 'deep',
-        'sunset' => 'olive',
-        'golden' => 'olive',
-        'coral' => 'olive',
-        'desert' => 'olive',
-        'coffee' => 'olive',
-        'champagne' => 'olive',
-        'slate' => 'deep',
-        'monochrome' => 'deep',
-        'minimal' => 'deep',
-        'charcoal' => 'deep',
-    ];
-
     public static function show(): never
     {
         $user = Auth::requireUser(true);
@@ -194,8 +155,8 @@ final class AppearanceController
         $user = Auth::requireUser(true);
 
         Database::execute(
-            'DELETE FROM user_appearance_settings WHERE user_type = ? AND user_id = ?',
-            [$user['type'], (int) $user['id']],
+            'UPDATE ' . Schema::t('users') . ' SET preferences = NULL WHERE id = ?',
+            [(int) $user['id']],
         );
 
         Http::json([
@@ -210,35 +171,23 @@ final class AppearanceController
     public static function forUser(array $user): array
     {
         $row = Database::fetchOne(
-            'SELECT preferences, theme_mode, accent_color, font_size,
-                    sidebar_state, interface_density, reduce_animations, updated_at
-             FROM user_appearance_settings
-             WHERE user_type = ? AND user_id = ?
+            'SELECT preferences, updated_at
+             FROM ' . Schema::t('users') . '
+             WHERE id = ?
              LIMIT 1',
-            [$user['type'], (int) $user['id']],
+            [(int) $user['id']],
         );
 
-        if (!$row) {
+        $decoded = $row ? json_decode((string) ($row['preferences'] ?? ''), true) : null;
+        if (!is_array($decoded)) {
             return [
                 'preferences' => self::DEFAULTS,
                 'updatedAt' => null,
             ];
         }
 
-        $preferences = null;
-        if (!empty($row['preferences'])) {
-            $decoded = json_decode((string) $row['preferences'], true);
-            if (is_array($decoded)) {
-                $preferences = self::sanitize($decoded, true);
-            }
-        }
-
-        if ($preferences === null) {
-            $preferences = self::fromLegacy($row);
-        }
-
         return [
-            'preferences' => $preferences,
+            'preferences' => self::sanitize($decoded, true),
             'updatedAt' => $row['updated_at'] ?? null,
         ];
     }
@@ -247,8 +196,8 @@ final class AppearanceController
     public static function forgetUser(string $type, int $id): void
     {
         Database::execute(
-            'DELETE FROM user_appearance_settings WHERE user_type = ? AND user_id = ?',
-            [$type, $id],
+            'UPDATE ' . Schema::t('users') . ' SET preferences = NULL WHERE id = ?',
+            [$id],
         );
     }
 
@@ -327,62 +276,23 @@ final class AppearanceController
         return null;
     }
 
-    /** Map a row written before the JSON column existed. */
-    private static function fromLegacy(array $row): array
-    {
-        $legacyAccent = (string) ($row['accent_color'] ?? 'forest');
-        $theme = self::LEGACY_ACCENTS[$legacyAccent] ?? self::DEFAULTS['theme'];
-        $fontSize = (string) ($row['font_size'] ?? 'medium');
-        $density = (string) ($row['interface_density'] ?? 'comfortable');
-
-        return [
-            'mode' => ($row['theme_mode'] ?? 'light') === 'dark' ? 'dark' : 'light',
-            'theme' => $theme,
-            'fontSize' => in_array($fontSize, ['small', 'medium', 'large'], true) ? $fontSize : 'medium',
-            'density' => in_array($density, ['compact', 'spacious'], true) ? $density : 'comfortable',
-            'corners' => 'rounded',
-            'animations' => !empty($row['reduce_animations']) ? 'off' : 'subtle',
-            'sidebar' => ($row['sidebar_state'] ?? 'expanded') === 'collapsed' ? 'collapsed' : 'expanded',
-            'cardStyle' => 'bordered',
-            'background' => 'solid',
-        ];
-    }
-
     private static function persist(array $user, array $preferences): string
     {
-        // The mirror columns are narrower than the JSON preferences.
-        $mode = in_array($preferences['mode'], ['light', 'dark'], true)
-            ? $preferences['mode']
-            : 'light';
-        $legacyAccent = self::LEGACY_COLUMN[$preferences['theme']] ?? 'forest';
-        $density = $preferences['density'] === 'compact' ? 'compact' : 'comfortable';
-
         Database::execute(
-            'INSERT INTO user_appearance_settings
-                (user_type, user_id, preferences, theme_mode, accent_color, font_size,
-                 sidebar_state, interface_density, reduce_animations)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE
-                preferences = VALUES(preferences),
-                theme_mode = VALUES(theme_mode),
-                accent_color = VALUES(accent_color),
-                font_size = VALUES(font_size),
-                sidebar_state = VALUES(sidebar_state),
-                interface_density = VALUES(interface_density),
-                reduce_animations = VALUES(reduce_animations)',
+            'UPDATE ' . Schema::t('users') . '
+             SET preferences = ?, updated_at = NOW()
+             WHERE id = ?',
             [
-                $user['type'],
-                (int) $user['id'],
                 json_encode($preferences, JSON_UNESCAPED_SLASHES),
-                $mode,
-                $legacyAccent,
-                $preferences['fontSize'],
-                $preferences['sidebar'],
-                $density,
-                $preferences['animations'] === 'off' ? 1 : 0,
+                (int) $user['id'],
             ],
         );
 
-        return date('Y-m-d H:i:s');
+        $row = Database::fetchOne(
+            'SELECT updated_at FROM ' . Schema::t('users') . ' WHERE id = ? LIMIT 1',
+            [(int) $user['id']],
+        );
+
+        return (string) ($row['updated_at'] ?? date('Y-m-d H:i:s'));
     }
 }

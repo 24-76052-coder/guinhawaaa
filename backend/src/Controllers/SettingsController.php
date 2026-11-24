@@ -8,6 +8,7 @@ use Guinhawa\Auth;
 use Guinhawa\Database;
 use Guinhawa\Http;
 use Guinhawa\Inventory;
+use Guinhawa\Schema;
 use Guinhawa\StateRepository;
 use Guinhawa\Validator;
 
@@ -62,7 +63,10 @@ final class SettingsController
         }
 
         if ($fields) {
-            Database::execute('UPDATE settings SET ' . implode(', ', $fields) . ' WHERE id = 1', $params);
+            Database::execute(
+                'UPDATE ' . Schema::t('settings') . ' SET ' . implode(', ', $fields) . ' WHERE id = 1',
+                $params,
+            );
             Auth::businessAudit('Settings Updated', 'Store settings were updated', $actor);
         }
 

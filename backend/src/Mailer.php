@@ -82,6 +82,23 @@ final class Mailer
         return strtolower((string) (self::config()['driver'] ?? 'smtp'));
     }
 
+    /** Whether the selected mail driver has the minimum settings needed to send. */
+    public static function isConfigured(): bool
+    {
+        $config = self::config();
+        $driver = strtolower((string) ($config['driver'] ?? 'smtp'));
+
+        if ($driver === 'file') {
+            return trim((string) ($config['spool_dir'] ?? '')) !== '';
+        }
+        if ($driver === 'mail') {
+            return function_exists('mail');
+        }
+
+        return trim((string) ($config['username'] ?? '')) !== ''
+            && trim((string) ($config['password'] ?? '')) !== '';
+    }
+
     private static function configureSmtp(PHPMailer $mail, array $config): void
     {
         $username = trim((string) ($config['username'] ?? ''));
